@@ -30,7 +30,7 @@
     [hidden] { display: none !important; }
     body { margin: 0; }
     svg { display: block; }
-    button, input { font: inherit; color: inherit; }
+    button, input, select { font: inherit; color: inherit; }
     button { cursor: pointer; }
     button:focus-visible, input:focus-visible {
       outline: 2px solid #167452;
@@ -79,6 +79,41 @@
     .fields { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .72rem 1.35rem; }
     .dimensions { margin-top: .96rem; }
     .dimensions[data-mode="area"] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .photo-panel {
+      margin-top: 1rem; padding: .8rem .88rem; border: 1px solid var(--line-soft);
+      border-radius: .48rem; background: #f3f8f4;
+    }
+    .photo-panel h3 { margin: 0; font-size: 1.04rem; }
+    .photo-actions { display: flex; flex-wrap: wrap; gap: .45rem; margin-top: .62rem; }
+    .photo-actions button {
+      border: 1px solid var(--green); border-radius: .36rem; background: var(--sheet);
+      color: var(--green); min-height: 44px; padding: .35rem .7rem; font-size: .89rem; font-weight: 720;
+    }
+    .photo-actions button:hover { background: #e5f2e8; }
+    .photo-actions button:disabled { opacity: .58; cursor: default; }
+    .photo-actions .photo-apply { background: var(--green); color: #fff; }
+    .photo-actions .photo-apply:hover { background: var(--forest); }
+    .photo-preview {
+      display: block; width: auto; max-width: 100%; max-height: 9rem;
+      margin: .7rem 0 0; border-radius: .35rem; border: 1px solid var(--line-soft);
+    }
+    .photo-status:not(:empty) { margin-top: .5rem; }
+    .photo-review { margin-top: .6rem; padding-top: .62rem; border-top: 1px solid var(--line-soft); }
+    .photo-review .fields { gap: .5rem; margin-top: .5rem; }
+    .photo-review .fields[data-mode="area"] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .photo-review label { font-size: .86rem; }
+    .photo-review select {
+      max-width: 100%; margin-left: .32rem; border: 1px solid var(--line);
+      border-radius: .3rem; background: var(--sheet); padding: .26rem .35rem;
+    }
+    .photo-review input { font-size: 1rem; }
+    .photo-review .unit { padding-inline: .32rem; }
+    .photo-text { margin-top: .55rem; font-size: .82rem; }
+    .photo-text summary { color: var(--green); cursor: pointer; font-weight: 650; }
+    .photo-text pre {
+      max-height: 8rem; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere;
+      margin: .3rem 0 0; font: inherit; padding: .5rem; background: var(--sheet);
+    }
     .field { min-width: 0; }
     .full { grid-column: 1 / -1; }
     .field label { display: block; margin-bottom: .31rem; font-size: 1.06rem; font-weight: 720; }
@@ -180,6 +215,7 @@
       h2 { font-size: 1.45rem; }
       .fields { gap: .7rem; }
       .control input { padding-inline: .52rem; font-size: 16px; }
+      .photo-review input { font-size: 16px; }
       .unit { font-size: .76rem; padding-inline: .31rem; }
       .cost-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .cost-fields .freight-field { grid-column: 1 / -1; }
@@ -242,6 +278,35 @@
                 <div class="control"><input id="depth" name="depth" inputmode="decimal" autocomplete="off" required placeholder="150" aria-describedby="depth-error"><span class="unit" aria-hidden="true">mm</span></div>
                 <p class="error" id="depth-error" hidden></p>
               </div>
+            </div>
+            <div class="photo-panel" id="photo-panel" hidden>
+              <h3>从图片读取尺寸</h3>
+              <p class="hint" id="photo-help">拍清楚图上的尺寸和单位，例如「长 4 m、宽 3 m、厚 150 mm」。照片只在本机处理。</p>
+              <div class="photo-actions" aria-describedby="photo-help">
+                <button type="button" id="take-photo">拍照</button>
+                <button type="button" id="upload-photo">上传图片</button>
+                <button type="button" id="remove-photo" hidden>移除图片</button>
+              </div>
+              <input type="file" id="camera-photo" accept="image/*" capture="environment" hidden>
+              <input type="file" id="select-photo" accept="image/*" hidden>
+              <img class="photo-preview" id="photo-preview" alt="待识别的尺寸图片" hidden>
+              <p class="hint photo-status" id="photo-status" role="status"></p>
+              <div class="photo-review" id="photo-review" hidden>
+                <h3>核对图片尺寸</h3>
+                <p class="hint" id="photo-mode-field" hidden>
+                  <label for="photo-mode">采用尺寸</label>
+                  <select id="photo-mode">
+                    <option value="rect">长度和宽度</option>
+                    <option value="area">已知面积</option>
+                  </select>
+                </p>
+                <div class="fields" id="photo-fields"></div>
+                <div class="photo-actions"><button class="photo-apply" id="apply-photo" type="button">套用尺寸并计算</button></div>
+              </div>
+              <details class="photo-text" id="photo-text" hidden>
+                <summary>查看识别文字</summary>
+                <pre id="photo-transcript"></pre>
+              </details>
             </div>
           </section>
           <section class="cost-section" aria-labelledby="cost-title">
@@ -324,6 +389,7 @@
       </footer>
     </main>
   </div>
+  <script src="./photo-dimensions.js"></script>
   <script>
     (() => {
       "use strict";
@@ -354,9 +420,9 @@
       let mode = "rect";
       let attempted = false;
 
-      function read(id) {
+      function read(id, input = byId(id).value) {
         const label = labels[id];
-        const raw = byId(id).value.trim();
+        const raw = input.trim();
         if (!raw) return { error: "请输入" + label + "。" };
         if (id === "product") {
           if (Array.from(raw).length > 80 || /[\u0000-\u001f\u007f]/u.test(raw) || !/[\p{L}\p{N}]/u.test(raw)) {
@@ -447,12 +513,16 @@
       byId("rect-mode").addEventListener("click", () => setMode("rect"));
       byId("area-mode").addEventListener("click", () => setMode("area"));
       form.addEventListener("focusout", ({ target }) => {
-        if (target.matches("input") && target.value.trim()) {
+        if (Object.hasOwn(labels, target.id) && target.value.trim()) {
           touched.add(target.id);
           refresh();
         }
       });
-      form.addEventListener("input", () => { status.textContent = ""; refresh(); });
+      form.addEventListener("input", ({ target }) => {
+        if (!Object.hasOwn(labels, target.id)) return;
+        status.textContent = "";
+        refresh();
+      });
       form.addEventListener("submit", (event) => {
         event.preventDefault();
         attempted = true;
@@ -473,6 +543,20 @@
         setMode("rect");
         status.textContent = "表单已清空，数量已恢复为 1 处。";
         byId("length").focus();
+      });
+      window.setupPhotoDimensions?.({
+        form,
+        validate: (id, value) => read(id, value).error,
+        apply: (nextMode, dimensions) => {
+          for (const [id, value] of Object.entries(dimensions)) {
+            byId(id).value = value;
+            touched.add(id);
+          }
+          setMode(nextMode);
+          const volumeText = byId("volume-value").textContent;
+          byId("result-card").focus();
+          return volumeText;
+        }
       });
       refresh();
     })();
