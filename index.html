@@ -114,6 +114,17 @@
       max-height: 8rem; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere;
       margin: .3rem 0 0; font: inherit; padding: .5rem; background: var(--sheet);
     }
+    .measure-panel summary { cursor: pointer; font-weight: 760; color: var(--green); }
+    .measure-panel .hint { margin-top: .45rem; }
+    .measure-panel .fields { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .55rem; margin-top: .6rem; }
+    .measure-panel label { font-size: .86rem; }
+    .measure-image {
+      margin-top: .55rem; max-height: 24rem; overflow: auto;
+      background: #e1eae3; border: 1px solid var(--line-soft); border-radius: .35rem;
+    }
+    .measure-image canvas { display: block; width: 100%; height: auto; cursor: crosshair; }
+    .measure-image canvas:focus-visible { outline: 2px solid var(--green); outline-offset: -2px; }
+    .measure-result { margin-top: .65rem; font-size: .91rem; font-weight: 720; }
     .field { min-width: 0; }
     .full { grid-column: 1 / -1; }
     .field label { display: block; margin-bottom: .31rem; font-size: 1.06rem; font-weight: 720; }
@@ -281,7 +292,7 @@
             </div>
             <div class="photo-panel" id="photo-panel" hidden>
               <h3>从图片读取尺寸</h3>
-              <p class="hint" id="photo-help">拍清楚图上的尺寸和单位，例如「长 4 m、宽 3 m、厚 150 mm」。照片只在本机处理。</p>
+              <p class="hint" id="photo-help">拍清楚图上的尺寸和单位，例如「长 4 m、宽 3 m、厚 150 mm」或「长 12′6″」。照片只在本机处理。</p>
               <div class="photo-actions" aria-describedby="photo-help">
                 <button type="button" id="take-photo">拍照</button>
                 <button type="button" id="upload-photo">上传图片</button>
@@ -308,6 +319,46 @@
                 <pre id="photo-transcript"></pre>
               </details>
             </div>
+            <details class="photo-panel measure-panel" id="measure-panel" hidden>
+              <summary>现场照片测量</summary>
+              <p class="hint">把卷尺平放在矩形浇筑面上，尽量从正上方拍下卷尺和四角。选择卷尺上相距较远的两个刻度，以提高估算准确度。</p>
+              <div class="photo-actions">
+                <button type="button" id="measure-camera-button">拍现场照片</button>
+                <button type="button" id="measure-upload-button">上传现场照片</button>
+              </div>
+              <input type="file" id="measure-camera" accept="image/*" capture="environment" hidden>
+              <input type="file" id="measure-file" accept="image/*" hidden>
+              <p class="hint photo-status" id="measure-status" role="status"></p>
+              <div id="measure-workspace" hidden>
+                <div class="fields">
+                  <div class="field">
+                    <label for="measure-reference">两刻度间实际距离</label>
+                    <div class="control"><input id="measure-reference" autocomplete="off" placeholder="例如 100 cm 或 3′" aria-describedby="measure-reference-help"></div>
+                    <p class="hint" id="measure-reference-help">可填 m、cm、mm、英尺或英寸。只填数字按 m。</p>
+                  </div>
+                  <div class="field">
+                    <label for="measure-depth">手动输入厚度</label>
+                    <div class="control"><input id="measure-depth" autocomplete="off" placeholder="例如 150 或 6″" aria-describedby="measure-depth-help"></div>
+                    <p class="hint" id="measure-depth-help">只填数字按 mm。</p>
+                  </div>
+                </div>
+                <p class="hint" id="measure-step" aria-live="polite"></p>
+                <div class="measure-image" id="measure-image">
+                  <canvas id="measure-canvas" tabindex="0" aria-label="现场照片标点" aria-describedby="measure-step measure-keys"></canvas>
+                </div>
+                <p class="sr-only" id="measure-keys">用方向键移动光标，按 Enter 标点。</p>
+                <div class="photo-actions">
+                  <button type="button" id="measure-undo" disabled>撤销一点</button>
+                  <button type="button" id="measure-zoom" aria-pressed="false">放大图片</button>
+                  <button type="button" id="measure-clear">移除现场照片</button>
+                </div>
+                <p class="measure-result" id="measure-result" role="status" hidden></p>
+                <div class="photo-actions" id="measure-apply-row" hidden>
+                  <button type="button" class="photo-apply" id="measure-apply">套用估算尺寸</button>
+                </div>
+                <p class="hint">结果为照片估算。斜拍、广角变形或卷尺与浇筑面不在同一平面会影响精度。</p>
+              </div>
+            </details>
           </section>
           <section class="cost-section" aria-labelledby="cost-title">
             <h2 class="step-heading" id="cost-title"><span class="step-number" aria-hidden="true">02</span>产品与费用</h2>
@@ -389,7 +440,9 @@
       </footer>
     </main>
   </div>
-  <script src="./photo-dimensions.js"></script>
+  <script src="./concrete-units.js"></script>
+  <script src="./photo-dimensions.js?v=2"></script>
+  <script src="./photo-measure.js"></script>
   <script>
     (() => {
       "use strict";
@@ -402,15 +455,17 @@
       };
       // Each numeric input is stored as a scaled integer; cents are rounded once, after multiplication.
       const limits = {
-        length: [3, "0.001", "10000", "m"],
-        width: [3, "0.001", "10000", "m"],
+        length: [6, "0.001", "10000", "m"],
+        width: [6, "0.001", "10000", "m"],
         area: [6, "0.000001", "100000000", "m²"],
-        depth: [2, "1", "10000", "mm"],
+        depth: [4, "1", "10000", "mm"],
         price: [2, "0.01", "1000000", "RM/m³"],
         quantity: [0, "1", "10000", "处"],
         freight: [2, "0", "1000000", "RM"]
       };
       const power = (digits) => 10n ** BigInt(digits);
+      const areaDigits = limits.length[0] + limits.width[0];
+      const volumeDigits = areaDigits + limits.depth[0] + 3;
       const wholeFormat = new Intl.NumberFormat("en-MY", { maximumFractionDigits: 0 });
       const splitDecimal = (value, digits) => {
         const [whole, fraction = ""] = value.split(".");
@@ -431,7 +486,13 @@
           return { value: raw };
         }
         const [digits, min, max, unit] = limits[id];
-        const value = raw.replace(/[０-９．]/gu, (c) => String.fromCharCode(c.charCodeAt(0) - 0xfee0));
+        let value = raw.replace(/[０-９．]/gu, (c) => String.fromCharCode(c.charCodeAt(0) - 0xfee0));
+        if (id === "length" || id === "width" || id === "depth") {
+          const mm = window.concreteUnits?.parse(value);
+          if (Number.isFinite(mm) && mm < 1e8) {
+            value = window.concreteUnits.asInput(id === "depth" ? mm : mm / 1000, digits);
+          }
+        }
         const rangeError = "范围：" + min + "～" + max + " " + unit + "。";
         if (!/^(?:[0-9]+(?:\.[0-9]+)?|\.[0-9]+)$/u.test(value)) {
           return { error: digits ? "请输入数字，小数使用点号。" : "请输入正整数。" };
@@ -457,9 +518,10 @@
       const rounded = (amount, divisor) => (amount + divisor / 2n) / divisor;
       const money = (cents) => "RM " + formatScaled(cents, 2);
       function formatVolume(value) {
-        const milli = rounded(value, power(8));
+        const divisor = power(volumeDigits - 3);
+        const milli = rounded(value, divisor);
         // Preserve very small nonzero volumes that would otherwise be shown as 0.000 m³.
-        return value < power(8) ? formatScaled(value, 11, 3) : formatScaled(milli, 3);
+        return value < divisor ? formatScaled(value, volumeDigits, 3) : formatScaled(milli, 3);
       }
       function setError(id, message) {
         const field = byId(id);
@@ -481,18 +543,19 @@
           setError(id, attempted || touched.has(id) ? result.error : null);
         }
         let area;
-        if (mode === "area") area = values.area;
+        if (mode === "area" && values.area !== undefined) area = values.area * power(areaDigits - limits.area[0]);
         else if (values.length !== undefined && values.width !== undefined) area = values.length * values.width;
         const volume = area !== undefined && values.depth !== undefined && values.quantity !== undefined
           ? area * values.depth * values.quantity : undefined;
-        const material = errors.length ? undefined : rounded(volume * values.price, power(11));
+        const material = errors.length ? undefined : rounded(volume * values.price, power(volumeDigits));
         const volumeText = volume === undefined ? "—" : formatVolume(volume);
         const totalText = material === undefined ? "RM —" : money(material + values.freight);
         byId("volume-value").textContent = volumeText;
         byId("volume-readout").dataset.compact = String(volumeText.length > 6);
         byId("total-value").textContent = totalText;
         byId("total-value").dataset.compact = String(totalText.length > 16);
-        byId("area-value").textContent = (area === undefined ? "—" : formatScaled(area, 6, 2)) + " m²";
+        byId("area-value").textContent = (area === undefined ? "—" : formatScaled(
+          rounded(area, power(areaDigits - 6)), 6, 2)) + " m²";
         byId("material-value").textContent = material === undefined ? "RM —" : money(material);
         byId("freight-value").textContent = values.freight === undefined ? "RM —" : money(values.freight);
         return { errors, volumeText, totalText, product: values.product };
@@ -544,7 +607,7 @@
         status.textContent = "表单已清空，数量已恢复为 1 处。";
         byId("length").focus();
       });
-      window.setupPhotoDimensions?.({
+      const photoCalculator = {
         form,
         validate: (id, value) => read(id, value).error,
         apply: (nextMode, dimensions) => {
@@ -557,7 +620,9 @@
           byId("result-card").focus();
           return volumeText;
         }
-      });
+      };
+      window.setupPhotoDimensions?.(photoCalculator);
+      window.setupPhotoMeasure?.(photoCalculator);
       refresh();
     })();
   </script>

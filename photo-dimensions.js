@@ -10,7 +10,6 @@
     area: "单处面积|單處面積|面积|面積|\\b(?:area|keluasan)\\b"
   };
   const number = "(?:[0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)(?:\\.[0-9]+)?|\\.[0-9]+";
-  const unit = "mm|cm|m|毫米|厘米|公分|米|公尺";
   const squareUnit = "(?:mm|cm|m)[ \\t]*(?:\\^?[ \\t]*2)|平方(?:毫米|厘米|公分|米|公尺)";
   const separator = "\\s*[:=]?\\s*";
   const endOfUnit = "(?![ \\t]*\\^?[23])(?![a-wyz]|x(?![ \\t]*[0-9.]))";
@@ -38,30 +37,45 @@
   }
 
   function parseDimensions(text) {
-    const normalized = text.normalize("NFKC").replace(/[\u2212\u2013\u2014]/g, "-")
+    const units = window.concreteUnits;
+    const normalized = units.normalize(text)
       .replace(/(?<=\p{Script=Han})[ \t]+(?=\p{Script=Han})/gu, "");
     const matches = {};
     const add = (dimension, amount, measurementUnit) => {
       const value = normalizeMeasurement(dimension, amount, measurementUnit);
       if (value !== null) (matches[dimension] ??= new Set()).add(value);
     };
+    const addLength = (dimension, reading) => {
+      const metric = new RegExp("^(" + number + ")[ \\t]*(毫米|厘米|公分|公尺|米|mm|cm|m)$", "iu").exec(reading);
+      if (metric) {
+        add(dimension, metric[1], metric[2]);
+        return;
+      }
+      const mm = units.parse(reading);
+      if (mm !== null && mm > 0) {
+        const value = dimension === "depth" ? units.asInput(mm, 4) : units.asInput(mm / 1000, 6);
+        (matches[dimension] ??= new Set()).add(value);
+      }
+    };
     for (const [dimension, label] of Object.entries(labels)) {
-      const allowedUnit = dimension === "area" ? squareUnit : unit;
-      const pattern = new RegExp("(?:" + label + ")" + separator + "(" + number +
-        ")[ \\t]*(" + allowedUnit + ")" + endOfUnit, "giu");
-      for (const [, amount, measurementUnit] of normalized.matchAll(pattern)) {
-        add(dimension, amount, measurementUnit);
+      const reading = dimension === "area"
+        ? "(" + number + ")[ \\t]*(" + squareUnit + ")" + endOfUnit
+        : "(" + units.pattern + ")";
+      const pattern = new RegExp("(?:" + label + ")" + separator + reading, "giu");
+      for (const [, value, measurementUnit] of normalized.matchAll(pattern)) {
+        if (dimension === "area") add(dimension, value, measurementUnit);
+        else addLength(dimension, value);
       }
     }
     // A written dimension triplet is conventionally length × width × thickness.
     // Require an explicit unit on each number and send all readings for review.
-    const piece = "(" + number + ")[ \\t]*(" + unit + ")" + endOfUnit;
+    const piece = "(" + units.pattern + ")";
     const times = "[ \\t]*[×xX*][ \\t]*";
     const triplets = new RegExp("(?<![0-9.,+\\-])" + piece + times + piece + times + piece, "giu");
-    for (const [, length, lengthUnit, width, widthUnit, depth, depthUnit] of normalized.matchAll(triplets)) {
-      add("length", length, lengthUnit);
-      add("width", width, widthUnit);
-      add("depth", depth, depthUnit);
+    for (const [, length, width, depth] of normalized.matchAll(triplets)) {
+      addLength("length", length);
+      addLength("width", width);
+      addLength("depth", depth);
     }
     return matches;
   }
@@ -114,7 +128,7 @@
 
   async function recognize(image, signal, progress) {
     const engine = await loadEngine();
-    if (signal.aborted) return "";
+    if (signal.aborted) return null;
     let worker;
     let finished = false;
     let deadline;
@@ -139,12 +153,27 @@
       });
       if (finished) {
         await ready.terminate();
-        return "";
+        return null;
       }
       worker = ready;
       await worker.setParameters({ tessedit_pageseg_mode: engine.PSM.SINGLE_BLOCK });
-      const result = await worker.recognize(image);
-      return result.data.text;
+      const primary = (await worker.recognize(image)).data.text;
+      const primaryReadings = parseDimensions(primary);
+      const complete = primaryReadings.depth?.size === 1 && (primaryReadings.area?.size === 1 ||
+        (primaryReadings.length?.size === 1 && primaryReadings.width?.size === 1));
+      if (complete || !/['‘’′"“”″]/u.test(primary)) return { text: primary, readings: primaryReadings };
+
+      // A second language pass can recover small prime marks omitted by the bilingual OCR.
+      await worker.reinitialize("eng");
+      const alternate = (await worker.recognize(image)).data.text;
+      const alternateReadings = parseDimensions(alternate);
+      const supplemented = Object.entries(alternateReadings).filter(([id, values]) =>
+        !primaryReadings[id] && values.size === 1);
+      if (!supplemented.length) return { text: primary, readings: primaryReadings };
+      return {
+        text: primary + "\n\n补充识别：\n" + alternate,
+        readings: { ...primaryReadings, ...Object.fromEntries(supplemented) }
+      };
     };
     try {
       return await Promise.race([stop, job()]);
@@ -263,13 +292,13 @@
         if (signal.aborted) return;
         preview.src = url;
         preview.hidden = false;
-        const text = await recognize(image, signal, (progress) => {
+        const recognized = await recognize(image, signal, (progress) => {
           if (!signal.aborted) status.textContent = "正在识别尺寸文字 " + Math.round(progress * 100) + "%";
         });
         if (signal.aborted) return;
+        const { text, readings: matches } = recognized;
         transcript.textContent = text.trim();
         textDetails.hidden = !transcript.textContent;
-        const matches = parseDimensions(text);
         for (const id of Object.keys(dimensionLabels)) {
           const readings = matches[id];
           const value = readings?.size === 1 ? [...readings][0] : "";
