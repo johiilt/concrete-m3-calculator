@@ -108,6 +108,25 @@
     }
     .photo-review input { font-size: 1rem; }
     .photo-review .unit { padding-inline: .32rem; }
+    .sketch { margin-top: .6rem; }
+    .sketch summary { cursor: pointer; font-weight: 700; color: var(--green); }
+    .sketch-image { position: relative; margin-top: .6rem; overflow: auto; max-height: 520px; border: 1px solid var(--line-soft); border-radius: .35rem; }
+    .sketch-image canvas { display: block; width: 100%; height: auto; touch-action: none; cursor: crosshair; }
+    .sketch-image canvas.pan-image { touch-action: pan-x pan-y; cursor: grab; }
+    .sketch-row, .sketch-piece {
+      display: grid; align-items: start; gap: .45rem; margin-top: .55rem; padding: .5rem;
+      border: 1px solid var(--line-soft); border-radius: .35rem; background: var(--sheet);
+    }
+    .sketch-row { grid-template-columns: 68px minmax(0, 1fr); }
+    .sketch-row img { width: 100%; max-height: 4.5rem; object-fit: contain; }
+    .sketch-row-fields, .sketch-piece-fields { display: grid; gap: .4rem; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .sketch label { display: block; font-size: .83rem; font-weight: 650; }
+    .sketch label > input, .sketch label > select {
+      width: 100%; min-width: 0; min-height: 40px; padding: .3rem .45rem; margin-top: .15rem;
+      border: 1px solid var(--line); border-radius: .3rem; background: var(--sheet); font-size: 1rem;
+    }
+    .sketch input[aria-invalid="true"] { border-color: var(--error); }
+    .sketch-output { white-space: normal; font-size: .81rem; color: var(--muted); }
     .photo-text { margin-top: .55rem; font-size: .82rem; }
     .photo-text summary { color: var(--green); cursor: pointer; font-weight: 650; }
     .photo-text pre {
@@ -325,6 +344,52 @@
                 <summary>查看识别文字</summary>
                 <pre id="photo-transcript"></pre>
               </details>
+              <details class="sketch" id="handwritten-review" hidden>
+                <summary>手写施工图 · 选区识别</summary>
+                <p class="hint" id="handwritten-help">每次只框一个数字和它后面的撇号，尽量避开边线。数字侧着时，可旋转选区再重读。</p>
+                <div class="sketch-image">
+                  <canvas id="handwritten-canvas" aria-describedby="handwritten-help" aria-label="施工图标注选择区"></canvas>
+                </div>
+                <div class="photo-actions">
+                  <button id="handwritten-turn" type="button">向左转 90°</button>
+                  <button id="handwritten-zoom" type="button" aria-pressed="false">放大图片</button>
+                  <button id="handwritten-pan" type="button" aria-pressed="false">移动图片</button>
+                  <button id="handwritten-read" type="button" disabled>识别并添加选区</button>
+                  <button id="handwritten-manual" type="button">手动添加标注</button>
+                </div>
+                <p class="hint" id="handwritten-status" role="status"></p>
+                <div id="handwritten-rows"></div>
+
+                <div class="photo-review">
+                  <h3>按图计算方量</h3>
+                  <div class="sketch-piece-fields">
+                    <label>轮廓类型
+                      <select id="sketch-shape"><option value="irregular">不规则轮廓</option><option value="rectangle">矩形</option></select>
+                    </label>
+                    <label>厚度（可带单位）
+                      <input id="sketch-depth" autocomplete="off" placeholder="例如 4″ 或 101.6 mm">
+                    </label>
+                  </div>
+                  <div id="sketch-irregular">
+                    <p class="hint">可直接填实测面积。只有边长时，可按实际尺寸拆成矩形和直角三角形，分别加减面积。</p>
+                    <label>实测净面积（可带单位）
+                      <input id="sketch-area" autocomplete="off" placeholder="例如 12 m² 或 120 ft²">
+                    </label>
+                    <div id="sketch-pieces"></div>
+                    <div class="photo-actions">
+                      <button id="sketch-rectangle" type="button">加矩形分块</button>
+                      <button id="sketch-triangle" type="button">加直角三角形分块</button>
+                    </div>
+                  </div>
+                  <div class="sketch-piece-fields" id="sketch-rect" hidden>
+                    <label>长度<input id="sketch-length" autocomplete="off" placeholder="例如 10′"></label>
+                    <label>宽度<input id="sketch-width" autocomplete="off" placeholder="例如 8′"></label>
+                  </div>
+                  <p class="hint">只填数字时，边长按 m、厚度按 mm、面积按 m²。</p>
+                  <p class="hint" id="sketch-status" role="status"></p>
+                  <div class="photo-actions"><button id="sketch-apply" class="photo-apply" type="button" disabled>采用核对后的尺寸并计算</button></div>
+                </div>
+              </details>
             </div>
             <details class="photo-panel measure-panel" id="measure-panel" hidden>
               <summary>现场照片测量</summary>
@@ -448,7 +513,8 @@
     </main>
   </div>
   <script src="./concrete-units.js?v=3"></script>
-  <script src="./photo-dimensions.js?v=3"></script>
+  <script src="./handwritten-dimensions.js?v=4"></script>
+  <script src="./photo-dimensions.js?v=4"></script>
   <script src="./photo-measure.js"></script>
   <script>
     (() => {

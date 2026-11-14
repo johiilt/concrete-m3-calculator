@@ -208,6 +208,7 @@
   }
 
   window.setupPhotoDimensions = ({ form, validate, apply }) => {
+    const handwritten = window.setupHandwrittenDimensions?.({ form, validate, apply });
     const get = (id) => document.getElementById(id);
     const status = get("photo-status");
     const review = get("photo-review");
@@ -226,6 +227,7 @@
     let mode;
 
     function clearPhoto() {
+      handwritten?.clear();
       controller?.abort();
       controller = undefined;
       if (currentImage) URL.revokeObjectURL(currentImage);
@@ -314,6 +316,7 @@
         if (signal.aborted) return;
         preview.src = url;
         preview.hidden = false;
+        handwritten?.load(image);
         const recognized = await recognize(image, signal, (progress) => {
           if (!signal.aborted) status.textContent = "正在识别尺寸文字 " + Math.round(progress * 100) + "%";
         });
@@ -327,7 +330,8 @@
           draft[id] = value && !validate(id, value) ? value : "";
         }
         if (!Object.keys(matches).length) {
-          status.textContent = "没有读到带单位的尺寸。请拍清楚标注，或直接在表单输入尺寸。";
+          status.textContent = "整图没有读到带单位的尺寸。可框选手写标注逐项识别。";
+          handwritten?.open();
           return;
         }
         const hasRect = Boolean(matches.length || matches.width);
@@ -346,6 +350,7 @@
         }
       } catch (error) {
         if (!signal.aborted) {
+          handwritten?.open();
           status.textContent = error instanceof Error && /[一-龯]/u.test(error.message) ? error.message
             : "识别暂时无法完成，请检查网络后重试，或直接在表单输入尺寸。";
         }
