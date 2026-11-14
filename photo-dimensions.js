@@ -324,13 +324,24 @@
         const { text, readings: matches, uncertain = [] } = recognized;
         transcript.textContent = text.trim();
         textDetails.hidden = !transcript.textContent;
+        const complete = matches.depth?.size === 1 && (matches.area?.size === 1 ||
+          (matches.length?.size === 1 && matches.width?.size === 1));
+        if (!complete && handwritten) {
+          status.textContent = "正在定位图上的手写尺寸…";
+          const found = await handwritten.detect(image, signal);
+          if (signal.aborted) return;
+          if (found) {
+            status.textContent = "已定位手写尺寸，请在下方逐项核对。";
+            return;
+          }
+        }
         for (const id of Object.keys(dimensionLabels)) {
           const readings = matches[id];
           const value = readings?.size === 1 ? [...readings][0] : "";
           draft[id] = value && !validate(id, value) ? value : "";
         }
         if (!Object.keys(matches).length) {
-          status.textContent = "整图没有读到带单位的尺寸。可框选手写标注逐项识别。";
+          status.textContent = "没有读到带单位的尺寸。可查看下方的手写图核对选项。";
           handwritten?.open();
           return;
         }

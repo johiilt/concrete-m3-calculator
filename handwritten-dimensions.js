@@ -208,6 +208,194 @@
       : "撇号未能确认，请手动补上 ′ 或 ″。" };
   }
 
+  const centerX = (part) => (part.left + part.right) / 2;
+  const centerY = (part) => (part.top + part.bottom) / 2;
+
+  function findOutline(parts, width, height) {
+    const outlines = parts.filter((part) => part.w > width * .12 && part.h > height * .12 &&
+      part.left > width * .015 && part.top > height * .015 &&
+      part.right < width * .985 && part.bottom < height * .985 &&
+      part.pixels.length < part.w * part.h * .28);
+    return outlines.sort((a, b) => b.w * b.h - a.w * a.h)[0];
+  }
+
+  function findLabels(parts, outline, width, height) {
+    const edge = Math.min(width, height);
+    const zone = outline ? Math.max(outline.w, outline.h) * .6 : edge;
+    const ink = parts.filter((part) => part !== outline && part.pixels.length > 9 &&
+      Math.max(part.w, part.h) < edge * .16 && part.left > 1 && part.top > 1 &&
+      part.right < width - 2 && part.bottom < height - 2 &&
+      (!outline || (part.left >= outline.left - zone && part.right <= outline.right + zone &&
+        part.top >= outline.top - zone && part.bottom <= outline.bottom + zone)));
+    if (ink.length > 210) return [];
+    const tall = ink.filter((part) => part.h >= edge * .016 && part.h < edge * .115 && part.w / part.h >= .34);
+    const labels = [];
+    for (const digit of tall) {
+      const h = digit.h;
+      const possiblePrimes = ink.filter((part) => {
+        const dx = (centerX(part) - centerX(digit)) / h;
+        const dy = (centerY(digit) - centerY(part)) / h;
+        return dx > -.19 && dx < 1.35 && part.left >= digit.left + h * .18 && part.left - digit.right < h * .48 &&
+          dy > .34 && dy < 1.58 && part.bottom < digit.bottom - h * .23 &&
+          part.h >= h * .19 && part.h <= h * .78 && part.w <= h * .42 &&
+          part.w / part.h < .79 && part.pixels.length < digit.pixels.length * .66;
+      }).sort((a, b) => centerX(a) - centerX(b));
+      if (!possiblePrimes.length) continue;
+      const marks = [possiblePrimes[0]];
+      const next = possiblePrimes[1];
+      if (next && centerX(next) - centerX(marks[0]) < h * .42 &&
+          Math.abs(centerY(next) - centerY(marks[0])) < h * .35 &&
+          Math.abs(strokeTilt(next, width) - strokeTilt(marks[0], width)) < 18) marks.push(next);
+      const digits = [digit];
+      const dots = [];
+      for (let step = 0; step < 3; step++) {
+        const first = digits[0];
+        const candidates = ink.filter((part) => {
+          const gap = first.left - part.right;
+          return !marks.includes(part) && part.h >= h * .48 && part.h <= h * 1.42 &&
+            part.w <= h * 1.05 && gap >= -h * .05 && gap <= h * .67 &&
+            part.bottom >= first.bottom - h * .48 && part.bottom <= first.bottom + h * 1.12 &&
+            part.top > first.top - h * .46 && part.top <= first.bottom + h * .04;
+        }).sort((a, b) => b.right - a.right);
+        const prior = candidates[0];
+        if (!prior) break;
+        const dot = ink.find((part) => part.h <= h * .23 && part.w <= h * .28 &&
+          centerX(part) > prior.right && centerX(part) < first.left + h * .12 &&
+          part.top > Math.min(prior.bottom, first.bottom) - h * .55 &&
+          part.bottom < Math.max(prior.bottom, first.bottom) + h * .24 &&
+          prior.pixels.length <= digit.pixels.length * 2.5);
+        if (dot) dots.push(dot);
+        else if (Math.abs(prior.bottom - first.bottom) > h * .36) break;
+        digits.unshift(prior);
+      }
+      labels.push({ digit, digits, dots, marks });
+    }
+    return labels;
+  }
+
+  function labelCrop(image, parts, isolate, pad = 4) {
+    const left = Math.min(...parts.map((part) => part.left));
+    const top = Math.min(...parts.map((part) => part.top));
+    const right = Math.max(...parts.map((part) => part.right));
+    const bottom = Math.max(...parts.map((part) => part.bottom));
+    const crop = document.createElement("canvas");
+    crop.width = right - left + 1 + pad * 2;
+    crop.height = bottom - top + 1 + pad * 2;
+    const context = crop.getContext("2d");
+    context.fillStyle = "#fff";
+    context.fillRect(0, 0, crop.width, crop.height);
+    if (isolate) {
+      context.fillStyle = "#111";
+      for (const { pixels } of parts) {
+        for (const p of pixels) context.fillRect(p % image.width - left + pad, Math.floor(p / image.width) - top + pad, 1, 1);
+      }
+    } else {
+      context.drawImage(image, pad - left, pad - top);
+    }
+    return { crop, box: { x: left, y: top, w: right - left + 1, h: bottom - top + 1 } };
+  }
+
+  function unreadableLabels(image, outline, used, parts, rows) {
+    if (!outline || rows.length < 3) return [];
+    const marks = rows.flatMap((row) => row.label.marks);
+    const heights = marks.map((part) => part.h).sort((a, b) => a - b);
+    const typical = heights[Math.floor(heights.length / 2)];
+    return parts.filter((part) => {
+      if (used.has(part) || part.h < typical * .78 || part.h > typical * 1.38 ||
+          part.w / part.h < .22 || part.w / part.h > .68 || part.pixels.length > part.h * 8) return false;
+      const x = centerX(part), y = centerY(part);
+      const nearOutline = x > outline.left - typical && x < outline.right + typical &&
+        y > outline.top - typical && y < outline.bottom + typical;
+      const nearLabel = rows.some(({ box }) => x >= box.x - typical * .42 && x <= box.x + box.w + typical * .42 &&
+        y >= box.y - typical * .42 && y <= box.y + box.h + typical * .42);
+      return nearOutline && !nearLabel && outline.pixels.some((pixel) => {
+        const px = pixel % image.width, py = Math.floor(pixel / image.width);
+        return px > x - part.h * 1.35 && px < x + part.h * .96 && py > y + part.h * .5 && py < y + part.h * 2.4;
+      });
+    }).slice(0, 10).map((part) => {
+      const region = {
+        left: Math.max(0, Math.floor(centerX(part) - part.h * 1.35)),
+        right: Math.min(image.width - 1, Math.ceil(centerX(part) + part.h * .96)),
+        top: Math.max(0, part.top - 5),
+        bottom: Math.min(image.height - 1, Math.ceil(part.top + part.h * 2.9))
+      };
+      return { ...labelCrop(image, [region], false), score: 0, text: "" };
+    });
+  }
+
+  async function scanDrawing(source, signal) {
+    const weights = await loadModel();
+    if (signal.aborted) return null;
+    let best;
+    for (const angle of [0, -90, 90, 180]) {
+      const image = angle ? turnImage(source, angle) : source;
+      const data = image.getContext("2d").getImageData(0, 0, image.width, image.height);
+      const parts = findInk(data);
+      const outline = findOutline(parts, image.width, image.height);
+      const labels = findLabels(parts, outline, image.width, image.height);
+      const resolved = [];
+      for (const label of labels.slice(0, 36)) {
+        const baselineTilt = label.digits.length > 1 ? Math.atan2(
+          label.digits.at(-1).bottom - label.digits[0].bottom,
+          centerX(label.digits.at(-1)) - centerX(label.digits[0])
+        ) * 180 / Math.PI : 0;
+        const predictions = digitsFrom(label.digits, image.width, weights);
+        const weakest = Math.min(...predictions.map(({ margin }) => margin));
+        const group = [...label.digits, ...label.dots, ...label.marks];
+        const unit = label.marks.length === 2 ? "″" : "′";
+        const { crop, box } = labelCrop(image, group, false, unit === "″" ? 12 : 4);
+        let value = predictions.map(({ digit }, i) => {
+          const hasDot = i > 0 && label.dots.some((dot) => centerX(dot) > centerX(label.digits[i - 1]) && centerX(dot) < centerX(label.digits[i]));
+          return (hasDot ? "." : "") + digit;
+        }).join("") + unit;
+        let uncertain = weakest < 3.25 || (Math.abs(baselineTilt) > 20 && label.digits.length > 1 && !label.dots.length);
+        if (unit === "″") {
+          const tilt = label.marks.reduce((sum, part) => sum + strokeTilt(part, image.width), 0) / 2;
+          if (Math.abs(tilt) >= 8 && Math.abs(tilt) <= 28) {
+            const clean = labelCrop(image, label.digits, true, 12).crop;
+            const retries = [];
+            for (const angle of [tilt * .75, tilt, tilt * 1.25]) {
+              const aligned = turnImage(clean, angle);
+              const parts = findInk(aligned.getContext("2d").getImageData(0, 0, aligned.width, aligned.height));
+              const largest = Math.max(...parts.map((item) => item.pixels.length));
+              const digits = parts.filter((part) => part.pixels.length > largest * .3)
+                .sort((a, b) => a.left - b.left);
+              if (digits.length !== label.digits.length) continue;
+              const corrected = digitsFrom(digits, aligned.width, weights);
+              if (corrected.every(({ margin }) => margin >= 1)) retries.push(corrected.map(({ digit }) => digit).join("") + unit);
+            }
+            const agreed = retries.find((text) => retries.filter((other) => other === text).length >= 2);
+            if (agreed && !label.dots.length) {
+              value = agreed;
+              uncertain = false;
+            }
+          }
+        }
+        const score = (uncertain ? .5 : 2) + Math.min(3, weakest / 4) +
+          (unit === "″" ? .65 : 0) + (label.digits.length > 1 ? .3 : 0) + (label.dots.length ? 1.3 : 0);
+        resolved.push({ crop, box, score, label, text: uncertain ? "" : value });
+      }
+      const used = new Set();
+      const rows = [];
+      for (const candidate of resolved.sort((a, b) => b.score - a.score)) {
+        const all = [...candidate.label.digits, ...candidate.label.marks];
+        if (all.some((part) => used.has(part))) continue;
+        all.forEach((part) => used.add(part));
+        rows.push(candidate);
+      }
+      const score = rows.reduce((sum, row) => sum + row.score, 0);
+      if (!best || score > best.score) {
+        best = { image, outline, rows: [...rows, ...unreadableLabels(image, outline, used, parts, rows)], score };
+      }
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      if (signal.aborted) return null;
+    }
+    const readable = best.rows.filter((row) => row.text).length;
+    if (readable < 2 && !(best.outline && best.rows.length >= 3)) return null;
+    best.rows.sort((a, b) => a.box.y - b.box.y || a.box.x - b.box.x);
+    return best;
+  }
+
   // Review and calculations are initialized by photo-dimensions.js when an image is loaded.
   window.setupHandwrittenDimensions = ({ form, validate, apply }) => {
     const byId = (id) => document.getElementById(id);
@@ -225,12 +413,27 @@
     const zoom = byId("handwritten-zoom"), pan = byId("handwritten-pan");
     const units = window.concreteUnits;
     let image, selected, drag, draft;
+    let detected = [];
     let revision = 0;
 
     const draw = () => {
       if (!image) return;
       const context = canvas.getContext("2d");
       context.drawImage(image, 0, 0);
+      const line = Math.max(2, canvas.width / 280);
+      for (const { box, uncertain, number } of detected) {
+        const color = uncertain ? "#965700" : "#007444";
+        context.lineWidth = line;
+        context.strokeStyle = color;
+        context.strokeRect(box.x, box.y, box.w, box.h);
+        const size = Math.max(16, canvas.width / 55);
+        const y = Math.max(0, box.y - size);
+        context.fillStyle = color;
+        context.fillRect(box.x, y, size * 1.35, size);
+        context.fillStyle = "#fff";
+        context.font = "bold " + (size * .8) + "px sans-serif";
+        context.fillText(number, box.x + line, y + size * .8);
+      }
       if (!selected) return;
       context.fillStyle = "#139c5433";
       context.fillRect(selected.x, selected.y, selected.w, selected.h);
@@ -238,9 +441,10 @@
       context.strokeStyle = "#007444";
       context.strokeRect(selected.x, selected.y, selected.w, selected.h);
     };
-    const setImage = (source) => {
+    const setImage = (source, labels = []) => {
       revision++;
       image = source;
+      detected = labels;
       selected = drag = undefined;
       canvas.width = source.width;
       canvas.height = source.height;
@@ -274,7 +478,14 @@
     };
     canvas.addEventListener("pointerup", stopDrag);
     canvas.addEventListener("pointercancel", stopDrag);
-    byId("handwritten-turn").addEventListener("click", () => { if (image) setImage(turnImage(image, -90)); });
+    byId("handwritten-turn").addEventListener("click", () => {
+      if (!image) return;
+      for (const mark of detected) {
+        const { x, y, w, h } = mark.box;
+        mark.box = { x: y, y: image.width - x - w, w: h, h: w };
+      }
+      setImage(turnImage(image, -90), detected);
+    });
     zoom.addEventListener("click", () => {
       const enlarged = zoom.getAttribute("aria-pressed") === "false";
       canvas.style.width = enlarged ? "200%" : "";
@@ -357,7 +568,7 @@
       row.querySelector("input").focus();
     }
 
-    function addRow(crop, reading = { text: "", note: "请按原图录入，如 10′ 或 4″。" }) {
+    function addRow(crop, reading = { text: "", note: "请按原图录入，如 10′ 或 4″。" }, marker) {
       const row = document.createElement("div");
       row.className = "sketch-row";
       row.innerHTML = '<div class="sketch-thumb"></div><div>' +
@@ -371,12 +582,27 @@
       const use = row.querySelector(".sketch-use"), turn = row.querySelector(".sketch-rotate");
       const thumb = document.createElement("img");
       thumb.alt = "标注选区";
+      if (marker) {
+        const heading = document.createElement("strong");
+        heading.className = "sketch-mark";
+        heading.textContent = "标注 " + marker.number;
+        thumb.alt = heading.textContent + "原图缩图";
+        row.firstElementChild.append(heading);
+        row.dataset.detected = "true";
+      }
       const convert = () => {
         const mm = units.parse(input.value);
         const valid = mm > 0;
         output.textContent = valid ? units.asInput(mm / 1000, 6) + " m · " + units.asInput(mm, 4) + " mm" : "请输入带单位的尺寸。";
         input.setAttribute("aria-invalid", String(Boolean(input.value) && !valid));
+        row.dataset.needsReview = String(!valid);
         use.hidden = !valid || !purpose.value;
+      };
+      const syncMarker = () => {
+        if (!marker) return;
+        marker.uncertain = row.dataset.needsReview === "true";
+        draw();
+        summarizeDetection();
       };
       input.value = reading.text;
       hint.textContent = reading.note;
@@ -385,7 +611,13 @@
         row.querySelector(".sketch-thumb").append(thumb);
         turn.hidden = false;
       }
-      input.addEventListener("input", convert);
+      input.addEventListener("input", () => {
+        convert();
+        if (marker) {
+          hint.textContent = row.dataset.needsReview === "true" ? "请对照原图补填数字和单位。" : "请核对修改后的标注。";
+          syncMarker();
+        }
+      });
       purpose.addEventListener("change", convert);
       use.addEventListener("click", () => {
         if (purpose.value !== "depth" && shape.value !== "rectangle") {
@@ -395,7 +627,14 @@
         byId("sketch-" + purpose.value).value = input.value;
         update();
       });
-      row.querySelector(".sketch-delete").addEventListener("click", () => row.remove());
+      row.querySelector(".sketch-delete").addEventListener("click", () => {
+        row.remove();
+        if (marker) {
+          detected = detected.filter((item) => item !== marker);
+          draw();
+          summarizeDetection();
+        }
+      });
       let turns = 0;
       turn.addEventListener("click", async () => {
         turns++;
@@ -408,6 +647,7 @@
           input.value = next.text;
           hint.textContent = next.note;
           convert();
+          syncMarker();
         } catch {
           hint.textContent = "无法识别，请手动修改。";
         } finally { turn.disabled = false; }
@@ -438,6 +678,7 @@
       } finally { if (ticket === revision) read.disabled = false; }
     });
     byId("handwritten-manual").addEventListener("click", () => addRow(null));
+    byId("sketch-jump").addEventListener("click", () => byId("sketch-calc-title").focus());
     byId("sketch-rectangle").addEventListener("click", () => addPiece("rectangle"));
     byId("sketch-triangle").addEventListener("click", () => addPiece("triangle"));
     byId("sketch-shape").addEventListener("change", update);
@@ -452,12 +693,41 @@
       const volume = apply(draft.mode, draft.values);
       note.textContent = volume === "—" ? "已套用尺寸，请检查数量。" : "计算结果 " + volume + " m³。";
     });
+    function summarizeDetection() {
+      const pending = detected.filter((mark) => mark.uncertain).length;
+      status.textContent = "当前有 " + detected.length + " 处自动定位的标注，" + pending +
+        " 处待补填。请核对缩图，并查看原图是否有遗漏。";
+    }
     return {
       load(source) { panel.hidden = false; setImage(source); update(); },
       open() { if (!panel.hidden) panel.open = true; },
+      async detect(source, signal) {
+        panel.open = true;
+        status.textContent = "正在从整张图寻找手写标注…";
+        const ticket = revision;
+        try {
+          const scan = await scanDrawing(source, signal);
+          if (signal.aborted || ticket !== revision) return 0;
+          if (!scan?.rows.length) {
+            status.textContent = "未能自动定位手写标注。可手动添加，或框选难读的区域重试。";
+            return 0;
+          }
+          const marks = scan.rows.map(({ box, text }, i) => ({ box, uncertain: !text, number: i + 1 }));
+          setImage(scan.image, marks);
+          scan.rows.forEach(({ crop, text }, i) => addRow(crop, {
+            text, note: text ? "请核对数字和撇号。" : "标注不清，请对照原图修改数字或单位。"
+          }, marks[i]));
+          summarizeDetection();
+          return marks.length;
+        } catch {
+          if (!signal.aborted && ticket === revision) status.textContent = "自动定位暂不可用，可手动添加或框选标注。";
+          return 0;
+        }
+      },
       clear() {
         revision++;
         image = selected = drag = draft = undefined;
+        detected = [];
         panel.open = false;
         panel.hidden = true;
         rows.replaceChildren();

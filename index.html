@@ -119,6 +119,8 @@
     }
     .sketch-row { grid-template-columns: 68px minmax(0, 1fr); }
     .sketch-row img { width: 100%; max-height: 4.5rem; object-fit: contain; }
+    .sketch-mark { display: block; margin-bottom: .2rem; font-size: .75rem; }
+    .sketch-row[data-needs-review="true"] { border-color: #bd944d; background: #fff9ed; }
     .sketch-row-fields, .sketch-piece-fields { display: grid; gap: .4rem; grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .sketch label { display: block; font-size: .83rem; font-weight: 650; }
     .sketch label > input, .sketch label > select {
@@ -345,8 +347,8 @@
                 <pre id="photo-transcript"></pre>
               </details>
               <details class="sketch" id="handwritten-review" hidden>
-                <summary>手写施工图 · 选区识别</summary>
-                <p class="hint" id="handwritten-help">每次只框一个数字和它后面的撇号，尽量避开边线。数字侧着时，可旋转选区再重读。</p>
+                <summary>手写施工图 · 识别与核对</summary>
+                <p class="hint" id="handwritten-help">按编号核对原图和读数。遗漏的标注可手动添加，或框选数字和撇号补读。</p>
                 <div class="sketch-image">
                   <canvas id="handwritten-canvas" aria-describedby="handwritten-help" aria-label="施工图标注选择区"></canvas>
                 </div>
@@ -358,10 +360,11 @@
                   <button id="handwritten-manual" type="button">手动添加标注</button>
                 </div>
                 <p class="hint" id="handwritten-status" role="status"></p>
+                <div class="photo-actions"><button id="sketch-jump" type="button">补填面积、厚度或斜边</button></div>
                 <div id="handwritten-rows"></div>
 
                 <div class="photo-review">
-                  <h3>按图计算方量</h3>
+                  <h3 id="sketch-calc-title" tabindex="-1">按图计算方量</h3>
                   <div class="sketch-piece-fields">
                     <label>轮廓类型
                       <select id="sketch-shape"><option value="irregular">不规则轮廓</option><option value="rectangle">矩形</option></select>
@@ -513,8 +516,8 @@
     </main>
   </div>
   <script src="./concrete-units.js?v=3"></script>
-  <script src="./handwritten-dimensions.js?v=4"></script>
-  <script src="./photo-dimensions.js?v=4"></script>
+  <script src="./handwritten-dimensions.js?v=5"></script>
+  <script src="./photo-dimensions.js?v=5"></script>
   <script src="./photo-measure.js"></script>
   <script>
     (() => {
