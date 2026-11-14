@@ -495,7 +495,6 @@
     const rows = byId("handwritten-rows");
     const pieces = byId("sketch-pieces");
     const shape = byId("sketch-shape");
-    const area = byId("sketch-area");
     const depth = byId("sketch-depth");
     const note = byId("sketch-status");
     const calculate = byId("sketch-apply");
@@ -600,31 +599,40 @@
       draft = undefined;
       const depthError = validate("depth", depth.value);
       if (irregular) {
-        let netArea = area.value.trim();
-        if (!netArea && pieces.children.length) {
-          let sum = 0;
-          for (const piece of pieces.children) {
-            const [baseInput, heightInput, diagonalInput] = piece.querySelectorAll("input");
-            const base = readableLength(baseInput.value, "m");
-            const height = readableLength(heightInput.value, "m");
-            const triangle = piece.dataset.shape === "triangle";
-            let rise = height;
-            if (triangle && !heightInput.value.trim()) {
-              const diagonal = readableLength(diagonalInput.value, "m");
-              if (diagonal > base && base > 0) rise = Math.sqrt(diagonal ** 2 - base ** 2);
-            }
-            if (!(base > 0 && rise > 0)) {
-              note.textContent = triangle ? "请补填三角形的垂直高度，或填斜边和一条直角边。" : "请补填矩形分块的长和宽。";
+        if (!pieces.children.length) {
+          note.textContent = "请添加至少一个分块并填写边长。";
+          return;
+        }
+        let sum = 0;
+        for (const [index, piece] of Array.from(pieces.children).entries()) {
+          const [baseInput, heightInput, diagonalInput] = piece.querySelectorAll("input");
+          const base = readableLength(baseInput.value, "m");
+          const height = readableLength(heightInput.value, "m");
+          const triangle = piece.dataset.shape === "triangle";
+          const prefix = "第 " + (index + 1) + " 个分块：";
+          let rise = height;
+          if (!(base > 0)) {
+            note.textContent = prefix + (triangle ? "请填写有效的底边（直角边）。" : "请填写有效的长度。");
+            return;
+          }
+          if (triangle && !heightInput.value.trim() && diagonalInput.value.trim()) {
+            const diagonal = readableLength(diagonalInput.value, "m");
+            if (!(diagonal > base)) {
+              note.textContent = prefix + "斜边必须大于底边，请核对尺寸。";
               return;
             }
-            const sign = Number(piece.querySelector("select").value);
-            sum += sign * base * rise / (triangle ? 2 : 1) / 1e6;
+            rise = Math.sqrt(diagonal ** 2 - base ** 2);
           }
-          if (sum > 0 && sum <= 1e8) netArea = units.asInput(sum, 6);
+          if (!(rise > 0)) {
+            note.textContent = prefix + (triangle ? "请补填有效的垂直高度，或留空高度并填写斜边。" : "请填写有效的宽度。");
+            return;
+          }
+          const sign = Number(piece.querySelector("select").value);
+          sum += sign * base * rise / (triangle ? 2 : 1) / 1e6;
         }
+        const netArea = sum > 0 && sum <= 1e8 ? units.asInput(sum, 6) : "";
         if (validate("area", netArea)) {
-          note.textContent = netArea ? "请核对净面积及单位。" :
-            "资料不足。请补填实测净面积，或增加分块并填斜边的水平、垂直投影（或直角边和斜边）。";
+          note.textContent = "分块算出的面积超出有效范围，请检查边长和加减设置。";
           return;
         }
         draft = { mode: "area", values: { area: netArea, depth: depth.value } };
@@ -847,7 +855,7 @@
         zoom.textContent = "放大图片";
         pan.setAttribute("aria-pressed", "false");
         pan.textContent = "移动图片";
-        for (const id of ["area", "depth", "length", "width"]) byId("sketch-" + id).value = "";
+        for (const id of ["depth", "length", "width"]) byId("sketch-" + id).value = "";
         shape.value = "irregular";
       }
     };

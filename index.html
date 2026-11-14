@@ -360,7 +360,7 @@
                   <button id="handwritten-manual" type="button">手动添加标注</button>
                 </div>
                 <p class="hint" id="handwritten-status" role="status"></p>
-                <div class="photo-actions"><button id="sketch-jump" type="button">补填面积、厚度或斜边</button></div>
+                <div class="photo-actions"><button id="sketch-jump" type="button">补填分块尺寸和厚度</button></div>
                 <div id="handwritten-rows"></div>
 
                 <div class="photo-review">
@@ -374,10 +374,7 @@
                     </label>
                   </div>
                   <div id="sketch-irregular">
-                    <p class="hint">可直接填实测面积。只有边长时，可按实际尺寸拆成矩形和直角三角形，分别加减面积。</p>
-                    <label>实测净面积（可带单位）
-                      <input id="sketch-area" autocomplete="off" placeholder="例如 12 m² 或 120 ft²">
-                    </label>
+                    <p class="hint">把浇筑区分成矩形和直角三角形，添加分块并填写边长。凹口等不浇筑的部分可选「扣除」。</p>
                     <div id="sketch-pieces"></div>
                     <div class="photo-actions">
                       <button id="sketch-rectangle" type="button">加矩形分块</button>
@@ -388,7 +385,7 @@
                     <label>长度<input id="sketch-length" autocomplete="off" placeholder="例如 10′"></label>
                     <label>宽度<input id="sketch-width" autocomplete="off" placeholder="例如 8′"></label>
                   </div>
-                  <p class="hint">只填数字时，边长按 m、厚度按 mm、面积按 m²。</p>
+                  <p class="hint">只填数字时，边长按 m、厚度按 mm。</p>
                   <p class="hint" id="sketch-status" role="status"></p>
                   <div class="photo-actions"><button id="sketch-apply" class="photo-apply" type="button" disabled>采用核对后的尺寸并计算</button></div>
                 </div>
@@ -516,7 +513,7 @@
     </main>
   </div>
   <script src="./concrete-units.js?v=3"></script>
-  <script src="./handwritten-dimensions.js?v=6"></script>
+  <script src="./handwritten-dimensions.js?v=7"></script>
   <script src="./photo-dimensions.js?v=5"></script>
   <script src="./photo-measure.js"></script>
   <script>
