@@ -136,6 +136,10 @@
     .plan-panel .plan-check { display: flex; gap: .4rem; align-items: center; margin-top: .6rem; }
     .plan-panel .plan-check input { width: 1rem; min-height: 1rem; margin: 0; }
     .plan-panel [role="status"] { margin-top: .65rem; }
+    .plan-review { margin-top: .65rem; padding: .6rem; border: 1px solid #c2965e; border-radius: .4rem; background: #fff9ee; }
+    .plan-review h5 { margin: 0 0 .3rem; font-size: 1rem; }
+    .plan-review #plan-review-drawing { width: 100%; border: 1px solid var(--line-soft); border-radius: .3rem; }
+    .plan-review .hint + .hint { margin-top: .3rem; }
     .photo-text { margin-top: .55rem; font-size: .82rem; }
     .photo-text summary { color: var(--green); cursor: pointer; font-weight: 650; }
     .photo-text pre {
@@ -389,6 +393,15 @@
                     <canvas id="plan-diagram" width="300" height="260" role="img" aria-label="A 主矩形，扣除左上三角形 B，加上右侧三角形 C"></canvas>
                     <p class="hint">A 主矩形 − B 左上角 + C 右侧。示意图不按比例，请核对分界及直角。</p>
                     <p id="plan-status" class="hint" role="status"></p>
+                    <div class="plan-review" id="plan-review" hidden>
+                      <h5>原图上需要复测的边</h5>
+                      <canvas id="plan-review-drawing" role="img" aria-describedby="plan-review-legend" aria-label="标有复测边的施工原图局部"></canvas>
+                      <p id="plan-review-legend" class="hint"></p>
+                      <p id="plan-review-measure" class="hint"></p>
+                    </div>
+                    <label id="plan-height-check" hidden>实测总高（可选，用于核对）
+                      <input id="plan-height" autocomplete="off" placeholder="例如 3.6 m 或 12′">
+                    </label>
                     <div id="plan-missing" class="plan-fields"></div>
                     <details id="plan-known-section" hidden>
                       <summary>已带入或填写的边长</summary>
@@ -541,9 +554,9 @@
     </main>
   </div>
   <script src="./concrete-units.js?v=3"></script>
-  <script src="./sketch-plan.js?v=1"></script>
-  <script src="./handwritten-dimensions.js?v=8"></script>
-  <script src="./photo-dimensions.js?v=5"></script>
+  <script src="./sketch-plan.js?v=2"></script>
+  <script src="./handwritten-dimensions.js?v=9"></script>
+  <script src="./photo-dimensions.js?v=6"></script>
   <script src="./photo-measure.js"></script>
   <script>
     (() => {
@@ -577,6 +590,7 @@
       const touched = new Set();
       let mode = "rect";
       let attempted = false;
+      let areaFromPlan = false;
 
       function read(id, input = byId(id).value, selectedUnit = defaultUnits[id]) {
         const label = labels[id];
@@ -705,6 +719,7 @@
       });
       form.addEventListener("input", ({ target }) => {
         if (!Object.hasOwn(labels, target.id)) return;
+        if (target.id === "area") areaFromPlan = false;
         status.textContent = "";
         refresh();
       });
@@ -722,6 +737,7 @@
       });
       form.addEventListener("reset", (event) => {
         event.preventDefault();
+        areaFromPlan = false;
         for (const id of Object.keys(labels)) byId(id).value = id === "quantity" ? "1" : "";
         for (const [id, unit] of Object.entries(defaultUnits)) byId(id + "-unit").value = unit;
         touched.clear();
@@ -733,7 +749,16 @@
       const photoCalculator = {
         form,
         validate: (id, value) => read(id, value).error,
-        apply: (nextMode, dimensions) => {
+        invalidatePlan: () => {
+          if (!areaFromPlan) return;
+          areaFromPlan = false;
+          byId("area").value = "";
+          touched.delete("area");
+          status.textContent = "";
+          refresh();
+        },
+        apply: (nextMode, dimensions, { source } = {}) => {
+          areaFromPlan = source === "plan";
           for (const [id, value] of Object.entries(dimensions)) {
             byId(id).value = value;
             byId(id + "-unit").value = defaultUnits[id];

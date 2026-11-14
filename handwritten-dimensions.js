@@ -487,7 +487,7 @@
   }
 
   // Review and calculations are initialized by photo-dimensions.js when an image is loaded.
-  window.setupHandwrittenDimensions = ({ form, validate, apply }) => {
+  window.setupHandwrittenDimensions = ({ form, validate, apply, invalidatePlan }) => {
     const byId = (id) => document.getElementById(id);
     const panel = byId("handwritten-review");
     const canvas = byId("handwritten-canvas");
@@ -504,7 +504,7 @@
     const confirmClear = byId("plan-confirm-clear");
     let activePlan = false;
     const planner = window.sketchPlan?.setup({
-      validate, apply, depth,
+      validate, apply, invalidatePlan, depth,
       onModeChange(enabled) { activePlan = enabled; update(); }
     });
     const units = window.concreteUnits;
@@ -818,7 +818,7 @@
     byId("sketch-triangle").addEventListener("click", () => addPiece("triangle"));
     byId("sketch-shape").addEventListener("change", update);
     panel.addEventListener("input", (event) => {
-      if (event.target.id === "sketch-depth") byId("plan-accept").checked = false;
+      if (event.target.id === "sketch-depth") planner?.dimensionsChanged();
       if (event.target.closest(".photo-review") && !event.target.closest(".plan-panel")) update();
     });
     panel.addEventListener("keydown", (event) => {
@@ -859,7 +859,7 @@
               requiresConfirmation ? "这是候选读数，请对照缩图确认数字和单位。" : "请核对数字和撇号。"
           }, marks[i]));
           const layout = window.sketchPlan?.analyze(scan.outline, scan.image.width, marks);
-          planner?.show(layout, marks);
+          planner?.show(layout, marks, scan.image);
           summarizeDetection();
           return marks.length;
         } catch {

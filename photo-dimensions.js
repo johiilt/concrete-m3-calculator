@@ -207,8 +207,8 @@
     }
   }
 
-  window.setupPhotoDimensions = ({ form, validate, apply }) => {
-    const handwritten = window.setupHandwrittenDimensions?.({ form, validate, apply });
+  window.setupPhotoDimensions = ({ form, validate, apply, invalidatePlan }) => {
+    const handwritten = window.setupHandwrittenDimensions?.({ form, validate, apply, invalidatePlan });
     const get = (id) => document.getElementById(id);
     const status = get("photo-status");
     const review = get("photo-review");

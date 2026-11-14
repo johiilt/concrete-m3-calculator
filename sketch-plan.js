@@ -2,6 +2,7 @@
   "use strict";
 
   const distance = (a, b) => Math.hypot(b.x - a.x, b.y - a.y);
+  const heightTolerance = .005; // metres
 
   function segmentDistance(point, start, end) {
     const dx = end.x - start.x, dy = end.y - start.y;
@@ -162,17 +163,20 @@
 
   function solve(values) {
     const { cap, upper, notch, rightSlope, lower, foot, left, leftSlope } = values;
-    if (cap >= foot) return { error: "顶边应短于底边，请核对这两条边。" };
+    if (cap >= foot) return { error: "顶边应短于底边，请核对这两条边。", keys: ["foot", "cap"] };
     const run = foot - cap;
-    if (leftSlope <= run) return { error: "左斜边必须长于左上角的水平差，请核对左斜边、顶边和底边。" };
-    if (rightSlope <= notch) return { error: "右斜边必须长于凸出段的水平边，请核对这两条边。" };
+    if (leftSlope <= run) return { error: "左斜边必须长于左上角的水平差，请核对左斜边、顶边和底边。", keys: ["leftSlope", "cap", "foot"] };
+    if (rightSlope <= notch) return { error: "右斜边必须长于凸出段的水平边，请核对这两条边。", keys: ["rightSlope", "notch"] };
     const leftRise = Math.sqrt(leftSlope ** 2 - run ** 2);
     const rightRise = Math.sqrt(rightSlope ** 2 - notch ** 2);
     const leftTotal = left + leftRise;
     const rightTotal = upper + lower + rightRise;
-    const tolerance = .005; // metres; avoid false conflicts from unit/measurement rounding.
-    if (Math.abs(leftTotal - rightTotal) > tolerance) {
-      return { conflict: true, leftTotal, rightTotal };
+    const difference = Math.abs(leftTotal - rightTotal);
+    const heightMismatch = values.measuredHeight != null &&
+      Math.max(Math.abs(leftTotal - values.measuredHeight), Math.abs(rightTotal - values.measuredHeight)) > heightTolerance + 1e-9;
+    const exceedsTolerance = difference > heightTolerance + 1e-9;
+    if (exceedsTolerance || heightMismatch) {
+      return { conflict: true, leftTotal, rightTotal, difference, exceedsTolerance, heightMismatch };
     }
     const total = (leftTotal + rightTotal) / 2;
     return { parts: [
@@ -186,6 +190,76 @@
     ["foot", "底边"], ["cap", "顶边"], ["left", "左侧直边"], ["leftSlope", "左斜边"],
     ["upper", "凹口上方直边"], ["notch", "凸出段水平边"], ["rightSlope", "右斜边"], ["lower", "右下直边"]
   ];
+  const inspectionOrder = ["leftSlope", "rightSlope", "left", "upper", "lower", "notch", "cap", "foot"];
+  const fieldNames = Object.fromEntries(fields);
+
+  function drawReview(canvas, image, edges, keys, primary, showHeight) {
+    const outline = Object.values(edges).flatMap(({ a, b }) => [a, b]);
+    const x1 = Math.min(...outline.map(({ x }) => x)), x2 = Math.max(...outline.map(({ x }) => x));
+    const y1 = Math.min(...outline.map(({ y }) => y)), y2 = Math.max(...outline.map(({ y }) => y));
+    const padding = Math.max(x2 - x1, y2 - y1) * .24;
+    const x = Math.max(0, Math.floor(x1 - padding)), y = Math.max(0, Math.floor(y1 - padding));
+    const width = Math.min(image.width - x, Math.ceil(x2 + padding - x));
+    const height = Math.min(image.height - y, Math.ceil(y2 + padding - y));
+    const scale = Math.min(720 / width, 720 / height);
+    canvas.width = Math.max(1, Math.round(width * scale));
+    canvas.height = Math.max(1, Math.round(height * scale));
+    const context = canvas.getContext("2d");
+    context.drawImage(image, x, y, width, height, 0, 0, canvas.width, canvas.height);
+
+    const size = Math.max(22, canvas.width * .047);
+    const point = (p) => ({ x: (p.x - x) * scale, y: (p.y - y) * scale });
+    const center = point({ x: (x1 + x2) / 2, y: (y1 + y2) / 2 });
+    if (showHeight) {
+      const top = point({ x: x1, y: (edges.cap.a.y + edges.cap.b.y) / 2 });
+      const bottom = point({ x: x1, y: (edges.foot.a.y + edges.foot.b.y) / 2 });
+      const axis = Math.max(size, top.x - size * 2);
+      context.beginPath();
+      context.moveTo(top.x, top.y);
+      context.lineTo(axis, top.y);
+      context.lineTo(axis, bottom.y);
+      context.lineTo(bottom.x, bottom.y);
+      context.lineWidth = size * .18;
+      context.strokeStyle = "#fff";
+      context.stroke();
+      context.lineWidth = size * .09;
+      context.strokeStyle = "#14557f";
+      context.setLineDash([size * .30, size * .15]);
+      context.stroke();
+      context.setLineDash([]);
+    }
+    keys.forEach((key, index) => {
+      const a = point(edges[key].a), b = point(edges[key].b);
+      const middle = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+      const length = Math.hypot(b.x - a.x, b.y - a.y);
+      let nx = (b.y - a.y) / length, ny = (a.x - b.x) / length;
+      if ((middle.x - center.x) * nx + (middle.y - center.y) * ny < 0) { nx = -nx; ny = -ny; }
+      const badge = { x: middle.x + nx * size * .82, y: middle.y + ny * size * .82 };
+      const color = primary.includes(key) ? "#a82b22" : "#774200";
+      context.beginPath();
+      context.moveTo(a.x, a.y);
+      context.lineTo(b.x, b.y);
+      context.lineCap = "round";
+      context.strokeStyle = "#fff";
+      context.lineWidth = size * .38;
+      context.stroke();
+      context.strokeStyle = color;
+      context.lineWidth = size * .19;
+      context.stroke();
+      context.beginPath();
+      context.arc(badge.x, badge.y, size * .43, 0, 2 * Math.PI);
+      context.fillStyle = color;
+      context.fill();
+      context.lineWidth = size * .055;
+      context.strokeStyle = "#fff";
+      context.stroke();
+      context.font = "bold " + size * .58 + "px sans-serif";
+      context.textAlign = "center";
+      context.textBaseline = "middle";
+      context.fillStyle = "#fff";
+      context.fillText(String(index + 1), badge.x, badge.y);
+    });
+  }
 
   function drawDiagram(canvas) {
     const context = canvas.getContext("2d");
@@ -210,11 +284,12 @@
     context.fillText("C +", 214, 115);
   }
 
-  function setup({ validate, apply, depth, onModeChange }) {
+  function setup({ validate, apply, invalidatePlan, depth, onModeChange }) {
     const get = (id) => document.getElementById("plan-" + id);
     const units = window.concreteUnits;
     const controls = new Map();
-    let edges, marks = [], ready;
+    let edges, reviewImage, marks = [], ready;
+    let displayedReview = "";
     const metres = (text) => {
       const value = text.trim();
       if (!value) return null;
@@ -222,6 +297,25 @@
       return mm > 0 && mm <= 1e7 ? mm / 1000 : null;
     };
     const metric = (value) => units.asInput(value, 3);
+    const status = (value) => {
+      if (get("status").textContent !== value) get("status").textContent = value;
+    };
+
+    function showReview(keys = [], primary = [], measurement = "", showHeight = false) {
+      get("review").hidden = !keys.length || !reviewImage;
+      for (const [key, control] of controls) {
+        const number = keys.indexOf(key) + 1;
+        control.name.textContent = (number ? number + " · " : "") + fieldNames[key];
+      }
+      if (!keys.length || !reviewImage) return;
+      const signature = keys.join(",") + "|" + primary.join(",") + "|" + showHeight;
+      if (displayedReview !== signature) {
+        drawReview(get("review-drawing"), reviewImage, edges, keys, primary, showHeight);
+        get("review-legend").textContent = keys.map((key, i) => (i + 1) + " " + fieldNames[key]).join(" · ");
+        displayedReview = signature;
+      }
+      get("review-measure").textContent = measurement;
+    }
 
     function update() {
       ready = undefined;
@@ -230,6 +324,7 @@
       if (!edges || get("panel").hidden) return;
       const values = {};
       const missing = [];
+      const missingKeys = [];
       for (const [key, label] of fields) {
         const control = controls.get(key);
         const number = edges[key].mark;
@@ -238,33 +333,59 @@
         values[key] = metres(control.input.value);
         const resolved = Boolean(values[key]);
         const list = resolved ? get("known") : get("missing");
-        if (control.row.parentElement !== list) list.append(control.row);
+        if (control.row.parentElement !== list && document.activeElement !== control.input) list.append(control.row);
         control.source.textContent = control.edited ? "手动填写" :
           mark?.confirmed ? "已带入标注 " + number :
           mark ? "确认标注 " + number + "，或直接填写。" : "请补填实测尺寸。";
         control.input.setAttribute("aria-invalid", String(Boolean(control.input.value) && !resolved));
-        if (!resolved) missing.push(label);
+        if (!resolved) { missing.push(label); missingKeys.push(key); }
       }
       get("known-section").hidden = !get("known").children.length;
       const needDepth = Boolean(validate("depth", depth.value));
       if (needDepth) missing.push("厚度");
+      const height = get("height");
+      values.measuredHeight = metres(height.value);
+      const hasHeight = Boolean(height.value.trim());
+      get("height-check").hidden = !hasHeight;
+      height.setAttribute("aria-invalid", String(hasHeight && !values.measuredHeight));
       get("accept").disabled = true;
-      if (missing.length > Number(needDepth)) {
-        get("status").textContent = "待补或确认：" + missing.join("、") + "。";
+      if (missingKeys.length) {
+        status("待补或确认：" + missing.join("、") + "。");
+        showReview(missingKeys, missingKeys, "请量图中标出的边，或确认已有标注。");
         return;
       }
       const result = solve(values);
       if (result.error || result.conflict) {
         get("known-section").open = true;
-        get("status").textContent = result.error ||
-          "尺寸无法闭合：左侧推得总高约 " + metric(result.leftTotal) + " m，右侧约 " +
-          metric(result.rightTotal) + " m。请以实测总高为参照，核对两条斜边及相邻边长。";
+        if (result.error) {
+          status(result.error);
+          showReview(result.keys, result.keys, "请用复测值修改编号对应的边长。");
+          return;
+        }
+        get("height-check").hidden = false;
+        const explanation = result.exceedsTolerance
+          ? "尺寸无法闭合：左侧约 " + metric(result.leftTotal) + " m，右侧约 " +
+            metric(result.rightTotal) + " m，相差 " + metric(result.difference) + " m（约 " +
+            Math.round(result.difference * 1000) + " mm）。"
+          : "两侧推算接近，但与实测总高 " + metric(values.measuredHeight) + " m 不符。";
+        status(explanation + (needDepth ? " 另需填写厚度。" : ""));
+        const measured = result.heightMismatch
+          ? " 实测总高与左、右推算分别相差约 " +
+            Math.round(Math.abs(values.measuredHeight - result.leftTotal) * 1000) + " mm、" +
+            Math.round(Math.abs(values.measuredHeight - result.rightTotal) * 1000) + " mm。" : "";
+        showReview(inspectionOrder, inspectionOrder.slice(0, 2),
+          "先复测 1、2 两条斜边，再量蓝色虚线所示的顶边到底边的垂直距离（总高）。仍对不上时复测 3–8。" + measured, true);
+        return;
+      }
+      showReview();
+      if (hasHeight && !values.measuredHeight) {
+        status("请填写有效的实测总高，或清空这个可选栏。");
         return;
       }
       const area = result.parts.reduce((sum, part) => sum + part.area, 0);
       const formatted = units.asInput(area, 6);
       if (validate("area", formatted)) {
-        get("status").textContent = "分块面积超出有效范围，请核对尺寸。";
+        status("分块面积超出有效范围，请核对尺寸。");
         return;
       }
       for (const part of result.parts) {
@@ -272,31 +393,38 @@
         item.textContent = part.title + "：" + (part.area < 0 ? "−" : "+") + metric(Math.abs(part.area)) + " m²";
         get("results").append(item);
       }
-      get("status").textContent = needDepth ? "请补填厚度。" :
-        "合计面积 " + metric(area) + " m²。请确认建议分法与施工图一致。";
+      status("两侧总高已对上。合计面积 " + metric(area) + " m²。" +
+        (needDepth ? " 请补填厚度。" : " 请确认建议分法与施工图一致。"));
       ready = needDepth ? undefined : formatted;
       get("accept").disabled = !ready;
       get("calculate").disabled = !ready || !get("accept").checked;
     }
     for (const [key, label] of fields) {
       const row = document.createElement("label");
-      row.append(label);
+      const name = document.createElement("span");
+      name.textContent = label;
+      row.append(name);
       const input = document.createElement("input");
       input.autocomplete = "off";
       input.placeholder = "例如 8′ 或 2.44 m";
       const source = document.createElement("span");
       source.className = "hint";
       row.append(input, source);
-      const control = { row, input, source, edited: false };
+      const control = { row, name, input, source, edited: false };
       controls.set(key, control);
       input.addEventListener("input", () => {
         control.edited = true;
-        ready = undefined;
-        get("accept").checked = false;
-        get("accept").disabled = get("calculate").disabled = true;
+        dimensionsChanged();
+        update();
       });
       input.addEventListener("change", update);
+      input.addEventListener("blur", update);
     }
+    function dimensionsChanged() {
+      invalidatePlan?.();
+      get("accept").checked = false;
+    }
+    get("height").addEventListener("input", () => { dimensionsChanged(); update(); });
     get("accept").addEventListener("change", update);
     get("manual").addEventListener("click", () => {
       get("panel").hidden = true;
@@ -310,16 +438,22 @@
     });
     get("calculate").addEventListener("click", () => {
       if (!ready || !get("accept").checked) return;
-      const volume = apply("area", { area: ready, depth: depth.value });
-      get("status").textContent = volume === "—" ? "已填入分块面积，请检查数量。" : "计算结果 " + volume + " m³。";
+      const volume = apply("area", { area: ready, depth: depth.value }, { source: "plan" });
+      status(volume === "—" ? "已填入分块面积，请检查数量。" : "计算结果 " + volume + " m³。");
     });
     drawDiagram(get("diagram"));
     return {
       update,
+      dimensionsChanged,
       showEntry(active, irregular) { get("open").hidden = active || !irregular || !edges; },
-      setMarks(next) { marks = next; get("accept").checked = false; update(); },
-      show(plan, confirmedMarks) {
+      setMarks(next) {
+        marks = next;
+        if (edges && !get("panel").hidden) { dimensionsChanged(); update(); }
+      },
+      show(plan, confirmedMarks, drawing) {
         edges = plan;
+        reviewImage = drawing;
+        displayedReview = "";
         marks = confirmedMarks;
         get("open").hidden = !edges;
         get("panel").hidden = !edges;
@@ -327,10 +461,15 @@
         update();
       },
       clear() {
+        invalidatePlan?.();
         edges = ready = undefined;
+        reviewImage = undefined;
+        displayedReview = "";
         marks = [];
         get("open").hidden = get("panel").hidden = true;
         get("accept").checked = false;
+        get("height").value = "";
+        showReview();
         get("known-section").open = false;
         for (const control of controls.values()) { control.edited = false; control.input.value = ""; }
         onModeChange(false);
