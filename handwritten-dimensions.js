@@ -500,6 +500,13 @@
     const calculate = byId("sketch-apply");
     const read = byId("handwritten-read");
     const zoom = byId("handwritten-zoom"), pan = byId("handwritten-pan");
+    const manualApply = calculate.parentElement;
+    const confirmClear = byId("plan-confirm-clear");
+    let activePlan = false;
+    const planner = window.sketchPlan?.setup({
+      validate, apply, depth,
+      onModeChange(enabled) { activePlan = enabled; update(); }
+    });
     const units = window.concreteUnits;
     let image, selected, drag, draft;
     let detected = [];
@@ -593,10 +600,15 @@
     }
     function update() {
       const irregular = shape.value === "irregular";
-      byId("sketch-irregular").hidden = !irregular;
+      const usePlan = activePlan && irregular;
+      byId("sketch-irregular").hidden = !irregular || usePlan;
       byId("sketch-rect").hidden = irregular;
+      byId("plan-panel").hidden = !usePlan;
+      planner?.showEntry(usePlan, irregular);
+      note.hidden = manualApply.hidden = usePlan;
       calculate.disabled = true;
       draft = undefined;
+      if (usePlan) { planner.update(); return; }
       const depthError = validate("depth", depth.value);
       if (irregular) {
         if (!pieces.children.length) {
@@ -697,15 +709,17 @@
         output.textContent = valid ? units.asInput(mm / 1000, 6) + " m · " + units.asInput(mm, 4) + " mm" : "请输入带单位的尺寸。";
         input.setAttribute("aria-invalid", String(Boolean(input.value) && !valid));
         row.dataset.needsReview = String(!valid || pending);
-        confirm.hidden = !pending;
+        confirm.hidden = !pending && (!marker || marker.confirmed);
         confirm.disabled = !valid;
         use.hidden = !valid || pending || !purpose.value;
       };
       const syncMarker = () => {
         if (!marker) return;
         marker.uncertain = row.dataset.needsReview === "true";
+        marker.text = input.value;
         draw();
         summarizeDetection();
+        planner?.setMarks(detected);
       };
       input.value = reading.text;
       hint.textContent = reading.note;
@@ -715,6 +729,7 @@
         turn.hidden = false;
       }
       input.addEventListener("input", () => {
+        if (marker) { marker.confirmed = false; pending = true; }
         convert();
         if (marker) {
           hint.textContent = pending ? "对照缩图修改后，请确认读数。" : "请核对修改后的标注。";
@@ -724,6 +739,7 @@
       confirm.addEventListener("click", () => {
         if (confirm.disabled) return;
         pending = false;
+        if (marker) marker.confirmed = true;
         hint.textContent = "读数已确认。";
         convert();
         syncMarker();
@@ -744,6 +760,7 @@
           detected = detected.filter((item) => item !== marker);
           draw();
           summarizeDetection();
+          planner?.setMarks(detected);
         }
       });
       let turns = 0;
@@ -757,6 +774,7 @@
           const next = await readMark(corrected, false);
           input.value = next.text;
           pending = Boolean(marker);
+          if (marker) marker.confirmed = false;
           hint.textContent = next.note;
           convert();
           syncMarker();
@@ -766,6 +784,7 @@
       });
       rows.append(row);
       convert();
+      if (marker) marker.confirm = () => { if (!pending && !marker.confirmed && !confirm.disabled) confirm.click(); };
     }
     read.addEventListener("click", async () => {
       if (!selected || !image) return;
@@ -791,11 +810,16 @@
     });
     byId("handwritten-manual").addEventListener("click", () => addRow(null));
     byId("sketch-jump").addEventListener("click", () => byId("sketch-calc-title").focus());
+    confirmClear.addEventListener("click", () => {
+      detected.forEach((mark) => mark.confirm?.());
+      byId("sketch-jump").focus();
+    });
     byId("sketch-rectangle").addEventListener("click", () => addPiece("rectangle"));
     byId("sketch-triangle").addEventListener("click", () => addPiece("triangle"));
     byId("sketch-shape").addEventListener("change", update);
     panel.addEventListener("input", (event) => {
-      if (event.target.closest(".photo-review")) update();
+      if (event.target.id === "sketch-depth") byId("plan-accept").checked = false;
+      if (event.target.closest(".photo-review") && !event.target.closest(".plan-panel")) update();
     });
     panel.addEventListener("keydown", (event) => {
       if (event.key === "Enter" && event.target.matches("input")) event.preventDefault();
@@ -807,6 +831,7 @@
     });
     function summarizeDetection() {
       const pending = detected.filter((mark) => mark.uncertain).length;
+      confirmClear.hidden = !detected.some((mark) => !mark.uncertain && !mark.confirmed);
       status.textContent = "当前有 " + detected.length + " 处自动定位的标注，" + pending +
         " 处待核对。请对照缩图，并查看原图是否有遗漏。";
     }
@@ -825,7 +850,7 @@
             return 0;
           }
           const marks = scan.rows.map(({ box, text, requiresConfirmation }, i) => ({
-            box, uncertain: !text || requiresConfirmation, number: i + 1
+            box, text, confirmed: false, uncertain: !text || requiresConfirmation, number: i + 1
           }));
           setImage(scan.image, marks);
           scan.rows.forEach(({ crop, text, requiresConfirmation }, i) => addRow(crop, {
@@ -833,6 +858,8 @@
             note: !text ? "标注不清，请对照原图补填数字和单位。" :
               requiresConfirmation ? "这是候选读数，请对照缩图确认数字和单位。" : "请核对数字和撇号。"
           }, marks[i]));
+          const layout = window.sketchPlan?.analyze(scan.outline, scan.image.width, marks);
+          planner?.show(layout, marks);
           summarizeDetection();
           return marks.length;
         } catch {
@@ -844,6 +871,8 @@
         revision++;
         image = selected = drag = draft = undefined;
         detected = [];
+        confirmClear.hidden = true;
+        planner?.clear();
         panel.open = false;
         panel.hidden = true;
         rows.replaceChildren();

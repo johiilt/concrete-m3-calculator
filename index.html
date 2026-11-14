@@ -129,6 +129,13 @@
     }
     .sketch input[aria-invalid="true"] { border-color: var(--error); }
     .sketch-output { white-space: normal; font-size: .81rem; color: var(--muted); }
+    .plan-panel { margin-block: .6rem; padding: .65rem; border: 1px solid var(--line-soft); border-radius: .4rem; background: var(--sheet); }
+    .plan-panel h4, .plan-panel p { margin: 0; }
+    .plan-panel canvas { display: block; max-width: 100%; height: auto; margin: .4rem auto; }
+    .plan-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .45rem; margin: .55rem 0; }
+    .plan-panel .plan-check { display: flex; gap: .4rem; align-items: center; margin-top: .6rem; }
+    .plan-panel .plan-check input { width: 1rem; min-height: 1rem; margin: 0; }
+    .plan-panel [role="status"] { margin-top: .65rem; }
     .photo-text { margin-top: .55rem; font-size: .82rem; }
     .photo-text summary { color: var(--green); cursor: pointer; font-weight: 650; }
     .photo-text pre {
@@ -360,7 +367,10 @@
                   <button id="handwritten-manual" type="button">手动添加标注</button>
                 </div>
                 <p class="hint" id="handwritten-status" role="status"></p>
-                <div class="photo-actions"><button id="sketch-jump" type="button">补填分块尺寸和厚度</button></div>
+                <div class="photo-actions">
+                  <button id="sketch-jump" type="button">查看分块和待补尺寸</button>
+                  <button id="plan-confirm-clear" type="button" hidden>确认清晰的边长</button>
+                </div>
                 <div id="handwritten-rows"></div>
 
                 <div class="photo-review">
@@ -373,6 +383,24 @@
                       <input id="sketch-depth" autocomplete="off" placeholder="例如 4″ 或 101.6 mm">
                     </label>
                   </div>
+                  <div class="photo-actions"><button id="plan-open" type="button" hidden>查看建议分块</button></div>
+                  <section class="plan-panel" id="plan-panel" aria-labelledby="plan-title" hidden>
+                    <h4 id="plan-title">建议分块</h4>
+                    <canvas id="plan-diagram" width="300" height="260" role="img" aria-label="A 主矩形，扣除左上三角形 B，加上右侧三角形 C"></canvas>
+                    <p class="hint">A 主矩形 − B 左上角 + C 右侧。示意图不按比例，请核对分界及直角。</p>
+                    <p id="plan-status" class="hint" role="status"></p>
+                    <div id="plan-missing" class="plan-fields"></div>
+                    <details id="plan-known-section" hidden>
+                      <summary>已带入或填写的边长</summary>
+                      <div id="plan-known" class="plan-fields"></div>
+                    </details>
+                    <ul id="plan-results"></ul>
+                    <label class="plan-check"><input id="plan-accept" type="checkbox" disabled>我已核对分块和直角</label>
+                    <div class="photo-actions">
+                      <button id="plan-calculate" class="photo-apply" type="button" disabled>按建议分块计算</button>
+                      <button id="plan-manual" type="button">改用手动分块</button>
+                    </div>
+                  </section>
                   <div id="sketch-irregular">
                     <p class="hint">把浇筑区分成矩形和直角三角形，添加分块并填写边长。凹口等不浇筑的部分可选「扣除」。</p>
                     <div id="sketch-pieces"></div>
@@ -513,7 +541,8 @@
     </main>
   </div>
   <script src="./concrete-units.js?v=3"></script>
-  <script src="./handwritten-dimensions.js?v=7"></script>
+  <script src="./sketch-plan.js?v=1"></script>
+  <script src="./handwritten-dimensions.js?v=8"></script>
   <script src="./photo-dimensions.js?v=5"></script>
   <script src="./photo-measure.js"></script>
   <script>
