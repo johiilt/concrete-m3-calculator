@@ -10,21 +10,17 @@
     area: "单处面积|單處面積|面积|面積|\\b(?:area|keluasan)\\b"
   };
   const number = "(?:[0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)(?:\\.[0-9]+)?|\\.[0-9]+";
-  const squareUnit = "(?:mm|cm|m)[ \\t]*(?:\\^?[ \\t]*2)|平方(?:毫米|厘米|公分|米|公尺)";
   const separator = "\\s*[:=]?\\s*";
-  const endOfUnit = "(?![ \\t]*\\^?[23])(?![a-wyz]|x(?![ \\t]*[0-9.]))";
   let engineScript;
 
   function normalizeMeasurement(dimension, amount, measurementUnit) {
     const raw = amount.replaceAll(",", "");
     if (raw.length > 16) return null;
-    const unitText = measurementUnit.toLowerCase().replace(/[\s^2]/g, "");
-    const baseUnit = unitText.replace(/^平方/, "");
+    const baseUnit = measurementUnit.toLowerCase();
     let metricPower = 0;
     if (/^(mm|毫米)$/.test(baseUnit)) metricPower = 3;
     if (/^(cm|厘米|公分)$/.test(baseUnit)) metricPower = 2;
-    const shift = dimension === "depth" ? 3 - metricPower
-      : dimension === "area" ? -2 * metricPower : -metricPower;
+    const shift = dimension === "depth" ? 3 - metricPower : -metricPower;
     // Move the decimal point using the original digits to preserve exact input precision.
     const [whole, fraction = ""] = raw.split(".");
     const digits = whole + fraction;
@@ -58,13 +54,15 @@
       }
     };
     for (const [dimension, label] of Object.entries(labels)) {
-      const reading = dimension === "area"
-        ? "(" + number + ")[ \\t]*(" + squareUnit + ")" + endOfUnit
-        : "(" + units.pattern + ")";
+      const reading = "(" + (dimension === "area" ? units.areaPattern : units.pattern) + ")";
       const pattern = new RegExp("(?:" + label + ")" + separator + reading, "giu");
-      for (const [, value, measurementUnit] of normalized.matchAll(pattern)) {
-        if (dimension === "area") add(dimension, value, measurementUnit);
-        else addLength(dimension, value);
+      for (const [, value] of normalized.matchAll(pattern)) {
+        if (dimension !== "area") {
+          addLength(dimension, value);
+          continue;
+        }
+        const area = units.parseArea(value);
+        if (area > 0 && area <= 1e8) (matches.area ??= new Set()).add(units.asInput(area, 6));
       }
     }
     // A written dimension triplet is conventionally length × width × thickness.
@@ -165,14 +163,38 @@
 
       // A second language pass can recover small prime marks omitted by the bilingual OCR.
       await worker.reinitialize("eng");
-      const alternate = (await worker.recognize(image)).data.text;
-      const alternateReadings = parseDimensions(alternate);
+      await worker.setParameters({ tessedit_pageseg_mode: engine.PSM.SINGLE_BLOCK });
+      const enlarged = document.createElement("canvas");
+      const scale = Math.min(2, Math.max(1, 3000 / Math.max(image.width, image.height)));
+      enlarged.width = Math.round(image.width * scale);
+      enlarged.height = Math.round(image.height * scale);
+      enlarged.getContext("2d").drawImage(image, 0, 0, enlarged.width, enlarged.height);
+      const alternate = (await worker.recognize(enlarged)).data.text;
+      const units = window.concreteUnits;
+      const alternateNormalized = units.normalize(alternate);
+      const linearLabel = "(?:" + labels.length + "|" + labels.width + ")" + separator;
+      const possibleFeet = "(" + linearLabel + number + ")[ \\t]*°";
+      // Recover a common OCR substitution only in labeled dimensions and only
+      // when a feet-and-inches reading provides independent unit context.
+      const imperialContext = new RegExp(possibleFeet + "[ \\t]*-?[ \\t]*(" + number + ')[ \\t]*"', "iu");
+      const recovered = imperialContext.test(alternateNormalized)
+        ? alternateNormalized.replace(new RegExp(possibleFeet + '(?=[ \\t]*(?:-?[ \\t]*' + number + '[ \\t]*"|$))', "gimu"), "$1'")
+        : alternateNormalized;
+      const alternateReadings = parseDimensions(alternateNormalized);
+      const recoveredReadings = recovered === alternateNormalized ? {} : parseDimensions(recovered);
+      const uncertain = [];
+      for (const id of ["length", "width"]) {
+        if (!primaryReadings[id] && !alternateReadings[id] && recoveredReadings[id]?.size === 1) {
+          alternateReadings[id] = recoveredReadings[id];
+          uncertain.push(id);
+        }
+      }
       const supplemented = Object.entries(alternateReadings).filter(([id, values]) =>
         !primaryReadings[id] && values.size === 1);
-      if (!supplemented.length) return { text: primary, readings: primaryReadings };
       return {
-        text: primary + "\n\n补充识别：\n" + alternate,
-        readings: { ...primaryReadings, ...Object.fromEntries(supplemented) }
+        text: alternate.trim() === primary.trim() ? primary : primary + "\n\n补充识别：\n" + alternate,
+        readings: { ...primaryReadings, ...Object.fromEntries(supplemented) },
+        uncertain
       };
     };
     try {
@@ -296,7 +318,7 @@
           if (!signal.aborted) status.textContent = "正在识别尺寸文字 " + Math.round(progress * 100) + "%";
         });
         if (signal.aborted) return;
-        const { text, readings: matches } = recognized;
+        const { text, readings: matches, uncertain = [] } = recognized;
         transcript.textContent = text.trim();
         textDetails.hidden = !transcript.textContent;
         for (const id of Object.keys(dimensionLabels)) {
@@ -318,6 +340,10 @@
         status.textContent = incomplete
           ? "请对照原图补齐空白尺寸。读到多个不同值或超出范围时会留空。"
           : "请对照原图核对尺寸，再套用到计算器。";
+        if (uncertain.length) {
+          status.textContent += " " + uncertain.map((id) => dimensionLabels[id]).join("、") +
+            "的单撇较难辨认，暂按英尺换算，请核对原图。";
+        }
       } catch (error) {
         if (!signal.aborted) {
           status.textContent = error instanceof Error && /[一-龯]/u.test(error.message) ? error.message

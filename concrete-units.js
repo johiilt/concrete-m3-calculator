@@ -32,13 +32,18 @@
   const matchImperial = new RegExp("^(?:(" + amount + ")\\s*" + foot +
     "(?:\\s*-?\\s*(" + amount + ")\\s*" + inch + ")?|(" + amount + ")\\s*" + inch + ")$", "i");
   const matchMetric = new RegExp("^(" + decimal + ")[ \\t]*(毫米|厘米|公分|公尺|米|mm|cm|m)$", "i");
+  const areaUnits = "(?:平方(?:毫米|厘米|公分|米|公尺|英尺|英寸)|" +
+    "(?:mm|cm|m|ft|in)[ \\t]*\\^?[ \\t]*2|sq\\.?[ \\t]*(?:ft|in))";
+  const areaPattern = "(" + decimal + ")[ \\t]*(" + areaUnits + ")(?![a-z\\d])";
+  const matchArea = new RegExp("^" + areaPattern + "$", "i");
 
   function parse(text) {
     const value = normalize(text).trim();
     const imperialMatch = matchImperial.exec(value);
     if (imperialMatch) {
       const [, feet, extraInches, inches] = imperialMatch;
-      const millimetres = readAmount(feet || "0") * 304.8 + readAmount(extraInches || inches || "0") * 25.4;
+      const totalInches = readAmount(feet || "0") * 12 + readAmount(extraInches || inches || "0");
+      const millimetres = totalInches * 254 / 10;
       return Number.isFinite(millimetres) ? millimetres : null;
     }
     const metricMatch = matchMetric.exec(value);
@@ -52,5 +57,15 @@
     return value.toFixed(digits).replace(/(?:\.0+|(\.\d*?[1-9])0+)$/, "$1");
   }
 
-  window.concreteUnits = { normalize, pattern, parse, asInput };
+  function parseArea(text) {
+    const match = matchArea.exec(normalize(text).trim());
+    if (!match) return null;
+    const [, measurement, notation] = match;
+    const unit = notation.toLowerCase().replace(/^平方|^sq\.?|[\s^2]/g, "");
+    const metres = parse("1 " + unit) / 1000;
+    const squareMetres = readAmount(measurement) * metres ** 2;
+    return Number.isFinite(squareMetres) ? squareMetres : null;
+  }
+
+  window.concreteUnits = { normalize, pattern, areaPattern, parse, parseArea, asInput };
 })();

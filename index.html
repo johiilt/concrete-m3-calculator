@@ -147,6 +147,12 @@
       border-radius: 0 .32rem .32rem 0; background: #f1f4f2; padding: 0 .68rem;
       white-space: nowrap; color: #374c41; font-size: .94rem;
     }
+    .unit-picker {
+      flex: none; min-height: 42px; border: 0; border-left: 1px solid var(--line-soft);
+      padding-inline: .35rem; cursor: pointer;
+    }
+    .unit-picker:focus-visible { outline-offset: -2px; }
+    .dimension-help { margin-top: .5rem; }
     .hint, .error { margin-top: .24rem; font-size: .81rem; line-height: 1.5; }
     .hint { color: var(--muted); }
     .error { color: var(--error); font-weight: 650; overflow-wrap: anywhere; }
@@ -253,7 +259,7 @@
         </span>
         <span>工程用量工具</span>
       </div>
-      <span class="units">公制 · RM</span>
+      <span class="units">m³ · RM</span>
     </header>
     <main>
       <div class="intro">
@@ -270,29 +276,30 @@
             </div>
             <div class="fields dimensions" id="dimension-fields" data-mode="rect">
               <div class="field" id="length-field">
-                <label for="length">长度 <span class="required" aria-hidden="true">*</span><span class="sr-only">（米）</span></label>
-                <div class="control"><input id="length" name="length" inputmode="decimal" autocomplete="off" required placeholder="4" aria-describedby="length-error"><span class="unit" aria-hidden="true">m</span></div>
+                <label for="length">长度 <span class="required" aria-hidden="true">*</span></label>
+                <div class="control"><input id="length" name="length" inputmode="decimal" autocomplete="off" required placeholder="4" aria-describedby="dimension-help length-error"><select class="unit unit-picker" id="length-unit" aria-label="长度单位"><option value="m">m</option><option value="cm">cm</option><option value="mm">mm</option><option value="ft">ft</option><option value="in">in</option></select></div>
                 <p class="error" id="length-error" hidden></p>
               </div>
               <div class="field" id="width-field">
-                <label for="width">宽度 <span class="required" aria-hidden="true">*</span><span class="sr-only">（米）</span></label>
-                <div class="control"><input id="width" name="width" inputmode="decimal" autocomplete="off" required placeholder="3" aria-describedby="width-error"><span class="unit" aria-hidden="true">m</span></div>
+                <label for="width">宽度 <span class="required" aria-hidden="true">*</span></label>
+                <div class="control"><input id="width" name="width" inputmode="decimal" autocomplete="off" required placeholder="3" aria-describedby="dimension-help width-error"><select class="unit unit-picker" id="width-unit" aria-label="宽度单位"><option value="m">m</option><option value="cm">cm</option><option value="mm">mm</option><option value="ft">ft</option><option value="in">in</option></select></div>
                 <p class="error" id="width-error" hidden></p>
               </div>
               <div class="field" id="area-field" hidden>
-                <label for="area">单处面积 <span class="required" aria-hidden="true">*</span><span class="sr-only">（平方米）</span></label>
-                <div class="control"><input id="area" name="area" inputmode="decimal" autocomplete="off" required disabled placeholder="12" aria-describedby="area-error"><span class="unit" aria-hidden="true">m²</span></div>
+                <label for="area">单处面积 <span class="required" aria-hidden="true">*</span></label>
+                <div class="control"><input id="area" name="area" inputmode="decimal" autocomplete="off" required disabled placeholder="12" aria-describedby="dimension-help area-error"><select class="unit unit-picker" id="area-unit" aria-label="面积单位"><option value="m2">m²</option><option value="ft2">ft²</option><option value="in2">in²</option></select></div>
                 <p class="error" id="area-error" hidden></p>
               </div>
               <div class="field">
-                <label for="depth">厚度 <span class="required" aria-hidden="true">*</span><span class="sr-only">（毫米）</span></label>
-                <div class="control"><input id="depth" name="depth" inputmode="decimal" autocomplete="off" required placeholder="150" aria-describedby="depth-error"><span class="unit" aria-hidden="true">mm</span></div>
+                <label for="depth">厚度 <span class="required" aria-hidden="true">*</span></label>
+                <div class="control"><input id="depth" name="depth" inputmode="decimal" autocomplete="off" required placeholder="150" aria-describedby="dimension-help depth-error"><select class="unit unit-picker" id="depth-unit" aria-label="厚度单位"><option value="mm">mm</option><option value="cm">cm</option><option value="m">m</option><option value="ft">ft</option><option value="in">in</option></select></div>
                 <p class="error" id="depth-error" hidden></p>
               </div>
             </div>
+            <p class="hint dimension-help" id="dimension-help">只填数字时按所选单位换算。输入 12′6″ 或 6 inch 时，以写出的单位为准。</p>
             <div class="photo-panel" id="photo-panel" hidden>
               <h3>从图片读取尺寸</h3>
-              <p class="hint" id="photo-help">拍清楚图上的尺寸和单位，例如「长 4 m、宽 3 m、厚 150 mm」或「长 12′6″」。照片只在本机处理。</p>
+              <p class="hint" id="photo-help">拍清楚尺寸和单位。图上单撇（′ 或 ‘）是英尺，双撇（″ 或 “）是英寸。照片只在本机处理。</p>
               <div class="photo-actions" aria-describedby="photo-help">
                 <button type="button" id="take-photo">拍照</button>
                 <button type="button" id="upload-photo">上传图片</button>
@@ -440,8 +447,8 @@
       </footer>
     </main>
   </div>
-  <script src="./concrete-units.js"></script>
-  <script src="./photo-dimensions.js?v=2"></script>
+  <script src="./concrete-units.js?v=3"></script>
+  <script src="./photo-dimensions.js?v=3"></script>
   <script src="./photo-measure.js"></script>
   <script>
     (() => {
@@ -463,6 +470,7 @@
         quantity: [0, "1", "10000", "处"],
         freight: [2, "0", "1000000", "RM"]
       };
+      const defaultUnits = { length: "m", width: "m", area: "m2", depth: "mm" };
       const power = (digits) => 10n ** BigInt(digits);
       const areaDigits = limits.length[0] + limits.width[0];
       const volumeDigits = areaDigits + limits.depth[0] + 3;
@@ -475,7 +483,7 @@
       let mode = "rect";
       let attempted = false;
 
-      function read(id, input = byId(id).value) {
+      function read(id, input = byId(id).value, selectedUnit = defaultUnits[id]) {
         const label = labels[id];
         const raw = input.trim();
         if (!raw) return { error: "请输入" + label + "。" };
@@ -487,14 +495,26 @@
         }
         const [digits, min, max, unit] = limits[id];
         let value = raw.replace(/[０-９．]/gu, (c) => String.fromCharCode(c.charCodeAt(0) - 0xfee0));
-        if (id === "length" || id === "width" || id === "depth") {
-          const mm = window.concreteUnits?.parse(value);
-          if (Number.isFinite(mm) && mm < 1e8) {
-            value = window.concreteUnits.asInput(id === "depth" ? mm : mm / 1000, digits);
+        const dimensionFormatError = id === "area" ? "请输入面积数字或带单位的面积，例如 120 ft²。" :
+          "请输入数字或带单位的尺寸，例如 12′6″。";
+        if (selectedUnit && window.concreteUnits) {
+          const units = window.concreteUnits;
+          const convert = id === "area" ? units.parseArea : units.parse;
+          const entered = convert(value);
+          const converted = entered ?? (selectedUnit !== defaultUnits[id] ? convert(value + " " + selectedUnit) : null);
+          if (converted !== null) {
+            const canonical = id === "area" || id === "depth" ? converted : converted / 1000;
+            if (canonical < Number(min) || canonical > Number(max)) {
+              return { error: "换算后范围：" + min + "～" + max + " " + unit + "。" };
+            }
+            value = units.asInput(canonical, digits);
+          } else if (selectedUnit !== defaultUnits[id]) {
+            return { error: dimensionFormatError };
           }
         }
         const rangeError = "范围：" + min + "～" + max + " " + unit + "。";
         if (!/^(?:[0-9]+(?:\.[0-9]+)?|\.[0-9]+)$/u.test(value)) {
+          if (selectedUnit) return { error: dimensionFormatError };
           return { error: digits ? "请输入数字，小数使用点号。" : "请输入正整数。" };
         }
         if (value.length > 32) return { error: rangeError };
@@ -537,7 +557,7 @@
         const values = {};
         const errors = [];
         for (const id of required) {
-          const result = read(id);
+          const result = read(id, byId(id).value, byId(id + "-unit")?.value);
           values[id] = result.value;
           if (result.error) errors.push(id);
           setError(id, attempted || touched.has(id) ? result.error : null);
@@ -569,12 +589,19 @@
           const active = id === "area" ? mode === "area" : mode === "rect";
           byId(id + "-field").hidden = !active;
           byId(id).disabled = !active;
+          byId(id + "-unit").disabled = !active;
           if (!active) setError(id, null);
         }
         refresh();
       }
       byId("rect-mode").addEventListener("click", () => setMode("rect"));
       byId("area-mode").addEventListener("click", () => setMode("area"));
+      for (const id of Object.keys(defaultUnits)) {
+        byId(id + "-unit").addEventListener("change", () => {
+          if (byId(id).value.trim()) touched.add(id);
+          refresh();
+        });
+      }
       form.addEventListener("focusout", ({ target }) => {
         if (Object.hasOwn(labels, target.id) && target.value.trim()) {
           touched.add(target.id);
@@ -601,6 +628,7 @@
       form.addEventListener("reset", (event) => {
         event.preventDefault();
         for (const id of Object.keys(labels)) byId(id).value = id === "quantity" ? "1" : "";
+        for (const [id, unit] of Object.entries(defaultUnits)) byId(id + "-unit").value = unit;
         touched.clear();
         attempted = false;
         setMode("rect");
@@ -613,6 +641,7 @@
         apply: (nextMode, dimensions) => {
           for (const [id, value] of Object.entries(dimensions)) {
             byId(id).value = value;
+            byId(id + "-unit").value = defaultUnits[id];
             touched.add(id);
           }
           setMode(nextMode);
@@ -623,7 +652,7 @@
       };
       window.setupPhotoDimensions?.(photoCalculator);
       window.setupPhotoMeasure?.(photoCalculator);
-      refresh();
+      setMode(mode);
     })();
   </script>
 </body>
