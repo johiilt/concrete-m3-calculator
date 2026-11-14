@@ -295,7 +295,74 @@
     return { crop, box: { x: left, y: top, w: right - left + 1, h: bottom - top + 1 } };
   }
 
-  function unreadableLabels(image, outline, used, parts, rows) {
+  function classifyTurnedDigit(crop, angle, weights) {
+    const aligned = turnImage(crop, angle);
+    const parts = findInk(aligned.getContext("2d").getImageData(0, 0, aligned.width, aligned.height));
+    const largest = parts.sort((a, b) => b.pixels.length - a.pixels.length)[0];
+    if (!largest || largest.h < aligned.height * .23 || largest.w > largest.h * 1.65 ||
+        largest.pixels.length > aligned.width * aligned.height * .48) return null;
+    if (parts.slice(1).some((part) => part.pixels.length >= largest.pixels.length * .45)) return null;
+    return digitsFrom([largest], aligned.width, weights)[0];
+  }
+
+  function consensus(samples, minimumVotes, minimumGap = 1) {
+    const totals = Array.from({ length: 10 }, () => ({ votes: 0, strength: 0 }));
+    for (const sample of samples) {
+      if (!sample || sample.margin < 1 || !Number.isFinite(sample.margin)) continue;
+      totals[sample.digit].votes++;
+      totals[sample.digit].strength += Math.min(7, sample.margin);
+    }
+    const [first, second] = totals.map((item, digit) => ({ ...item, digit }))
+      .sort((a, b) => b.strength - a.strength);
+    return first.votes >= minimumVotes && first.strength >= second.strength + minimumGap ? first.digit : null;
+  }
+
+  function recoverTiltedLabel(image, label, tilt, weights, original) {
+    if (label.marks.length !== 1 || Math.abs(tilt) > 63) return null;
+    if (label.digits.length > 1 && !label.dots.length) return null;
+    const markedTilt = strokeTilt(label.marks[0], image.width);
+    const decimal = label.digits.length > 1;
+    if (decimal && Math.abs(tilt) < 18) return null;
+    const readings = label.digits.map((part, i) => {
+      const upright = original[i];
+      if (decimal && i === label.digits.length - 1 && upright.margin >= 3.25) return upright.digit;
+      const isolated = labelCrop(image, [part], true, Math.ceil(part.h * .28)).crop;
+      const angles = decimal
+        ? [.44, .5, .56, .62, .68, .78].map((factor) => -tilt * factor)
+        : [markedTilt - 36, markedTilt - 24, markedTilt + 24, markedTilt + 36, markedTilt + 48];
+      return consensus(angles.map((angle) => classifyTurnedDigit(isolated, angle, weights)), decimal ? 3 : 4, 6);
+    });
+    if (readings.some((digit) => digit === null)) return null;
+    return readings.map((digit, i) => {
+      const decimalPoint = i > 0 && label.dots.some((dot) => centerX(dot) > centerX(label.digits[i - 1]) &&
+        centerX(dot) < centerX(label.digits[i]));
+      return (decimalPoint ? "." : "") + digit;
+    }).join("") + "′";
+  }
+
+  function recoverJoinedDigit(image, prime, weights) {
+    const x = centerX(prime), base = prime.h;
+    const samples = [];
+    // The detached prime locates the digit even when its ink joins the boundary.
+    // Trim progressively toward the prime to drop part of the boundary stroke.
+    for (const [width, height] of [[2.12, 2.82], [2.02, 2.68], [1.84, 2.57], [2.18, 2.62]]) {
+      const bounds = {
+        left: Math.max(0, Math.round(x - base * 1.17)),
+        right: Math.min(image.width - 1, Math.round(x + base * (width - 1.17))),
+        top: Math.round(prime.top + base * .72),
+        bottom: Math.min(image.height - 1, Math.round(prime.top + base * height))
+      };
+      const crop = labelCrop(image, [bounds], false, 0).crop;
+      const signedTilt = strokeTilt(prime, image.width);
+      for (const angle of [0, signedTilt * .45, signedTilt * .8, signedTilt, signedTilt * 1.35]) {
+        samples.push(classifyTurnedDigit(crop, angle, weights));
+      }
+    }
+    const digit = consensus(samples, 5, 6);
+    return digit === null ? "" : digit + "′";
+  }
+
+  function unreadableLabels(image, outline, used, parts, rows, weights) {
     if (!outline || rows.length < 3) return [];
     const marks = rows.flatMap((row) => row.label.marks);
     const heights = marks.map((part) => part.h).sort((a, b) => a - b);
@@ -319,7 +386,8 @@
         top: Math.max(0, part.top - 5),
         bottom: Math.min(image.height - 1, Math.ceil(part.top + part.h * 2.9))
       };
-      return { ...labelCrop(image, [region], false), score: 0, text: "" };
+      return { ...labelCrop(image, [region], false), score: 0,
+        text: recoverJoinedDigit(image, part, weights), requiresConfirmation: true };
     });
   }
 
@@ -349,6 +417,15 @@
           return (hasDot ? "." : "") + digit;
         }).join("") + unit;
         let uncertain = weakest < 3.25 || (Math.abs(baselineTilt) > 20 && label.digits.length > 1 && !label.dots.length);
+        let requiresConfirmation = false;
+        if (uncertain) {
+          const recovered = recoverTiltedLabel(image, label, baselineTilt, weights, predictions);
+          if (recovered) {
+            value = recovered;
+            uncertain = false;
+            requiresConfirmation = true;
+          }
+        }
         if (unit === "″") {
           const tilt = label.marks.reduce((sum, part) => sum + strokeTilt(part, image.width), 0) / 2;
           if (Math.abs(tilt) >= 8 && Math.abs(tilt) <= 28) {
@@ -373,7 +450,7 @@
         }
         const score = (uncertain ? .5 : 2) + Math.min(3, weakest / 4) +
           (unit === "″" ? .65 : 0) + (label.digits.length > 1 ? .3 : 0) + (label.dots.length ? 1.3 : 0);
-        resolved.push({ crop, box, score, label, text: uncertain ? "" : value });
+        resolved.push({ crop, box, score, label, text: uncertain ? "" : value, requiresConfirmation });
       }
       const used = new Set();
       const rows = [];
@@ -385,13 +462,26 @@
       }
       const score = rows.reduce((sum, row) => sum + row.score, 0);
       if (!best || score > best.score) {
-        best = { image, outline, rows: [...rows, ...unreadableLabels(image, outline, used, parts, rows)], score };
+        best = { image, outline, rows: [...rows, ...unreadableLabels(image, outline, used, parts, rows, weights)], score };
       }
       await new Promise((resolve) => setTimeout(resolve, 0));
       if (signal.aborted) return null;
     }
     const readable = best.rows.filter((row) => row.text).length;
     if (readable < 2 && !(best.outline && best.rows.length >= 3)) return null;
+    // Dense corners can share a stroke between neighboring labels. Preserve
+    // the tentative reading, but require confirmation for both labels.
+    for (let i = 0; i < best.rows.length; i++) {
+      const first = best.rows[i];
+      for (const second of best.rows.slice(i + 1)) {
+        const a = first.box, b = second.box;
+        const overlapX = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
+        const overlapY = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
+        if (overlapX >= Math.min(a.w, b.w) * .25 && overlapY >= Math.min(a.h, b.h) * .25) {
+          first.requiresConfirmation = second.requiresConfirmation = true;
+        }
+      }
+    }
     best.rows.sort((a, b) => a.box.y - b.box.y || a.box.x - b.box.x);
     return best;
   }
@@ -575,11 +665,14 @@
         '<div class="sketch-row-fields"><label>标注<input type="text" autocomplete="off" placeholder="例如 10′"></label>' +
         '<label>用途<select><option value="">边长／核对</option><option value="depth">厚度</option><option value="length">矩形长度</option><option value="width">矩形宽度</option></select></label></div>' +
         '<p class="hint"></p><p class="sketch-output" aria-live="polite"></p><div class="photo-actions">' +
+        '<button type="button" class="sketch-confirm" hidden>确认读数</button>' +
         '<button type="button" class="sketch-use" hidden>填入用途</button><button type="button" class="sketch-rotate" hidden>转正选区</button>' +
         '<button type="button" class="sketch-delete">移除</button></div></div>';
       const input = row.querySelector("input"), purpose = row.querySelector("select");
       const hint = row.querySelector(".hint"), output = row.querySelector("p.sketch-output");
       const use = row.querySelector(".sketch-use"), turn = row.querySelector(".sketch-rotate");
+      const confirm = row.querySelector(".sketch-confirm");
+      let pending = Boolean(reading.requiresConfirmation);
       const thumb = document.createElement("img");
       thumb.alt = "标注选区";
       if (marker) {
@@ -595,8 +688,10 @@
         const valid = mm > 0;
         output.textContent = valid ? units.asInput(mm / 1000, 6) + " m · " + units.asInput(mm, 4) + " mm" : "请输入带单位的尺寸。";
         input.setAttribute("aria-invalid", String(Boolean(input.value) && !valid));
-        row.dataset.needsReview = String(!valid);
-        use.hidden = !valid || !purpose.value;
+        row.dataset.needsReview = String(!valid || pending);
+        confirm.hidden = !pending;
+        confirm.disabled = !valid;
+        use.hidden = !valid || pending || !purpose.value;
       };
       const syncMarker = () => {
         if (!marker) return;
@@ -614,9 +709,17 @@
       input.addEventListener("input", () => {
         convert();
         if (marker) {
-          hint.textContent = row.dataset.needsReview === "true" ? "请对照原图补填数字和单位。" : "请核对修改后的标注。";
+          hint.textContent = pending ? "对照缩图修改后，请确认读数。" : "请核对修改后的标注。";
           syncMarker();
         }
+      });
+      confirm.addEventListener("click", () => {
+        if (confirm.disabled) return;
+        pending = false;
+        hint.textContent = "读数已确认。";
+        convert();
+        syncMarker();
+        input.focus();
       });
       purpose.addEventListener("change", convert);
       use.addEventListener("click", () => {
@@ -645,6 +748,7 @@
         try {
           const next = await readMark(corrected, false);
           input.value = next.text;
+          pending = Boolean(marker);
           hint.textContent = next.note;
           convert();
           syncMarker();
@@ -696,7 +800,7 @@
     function summarizeDetection() {
       const pending = detected.filter((mark) => mark.uncertain).length;
       status.textContent = "当前有 " + detected.length + " 处自动定位的标注，" + pending +
-        " 处待补填。请核对缩图，并查看原图是否有遗漏。";
+        " 处待核对。请对照缩图，并查看原图是否有遗漏。";
     }
     return {
       load(source) { panel.hidden = false; setImage(source); update(); },
@@ -712,10 +816,14 @@
             status.textContent = "未能自动定位手写标注。可手动添加，或框选难读的区域重试。";
             return 0;
           }
-          const marks = scan.rows.map(({ box, text }, i) => ({ box, uncertain: !text, number: i + 1 }));
+          const marks = scan.rows.map(({ box, text, requiresConfirmation }, i) => ({
+            box, uncertain: !text || requiresConfirmation, number: i + 1
+          }));
           setImage(scan.image, marks);
-          scan.rows.forEach(({ crop, text }, i) => addRow(crop, {
-            text, note: text ? "请核对数字和撇号。" : "标注不清，请对照原图修改数字或单位。"
+          scan.rows.forEach(({ crop, text, requiresConfirmation }, i) => addRow(crop, {
+            text, requiresConfirmation: !text || requiresConfirmation,
+            note: !text ? "标注不清，请对照原图补填数字和单位。" :
+              requiresConfirmation ? "这是候选读数，请对照缩图确认数字和单位。" : "请核对数字和撇号。"
           }, marks[i]));
           summarizeDetection();
           return marks.length;
